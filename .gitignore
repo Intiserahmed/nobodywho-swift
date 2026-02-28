@@ -1,0 +1,22 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Xcode
+xcuserdata/
+*.xcworkspace
+*.xcodeproj
+!*.xcworkspace/contents.xcworkspacedata
+!*.xcworkspace/xcshareddata/
+!*.xcodeproj/project.pbxproj
+!*.xcodeproj/xcshareddata/
+
+# XCFramework (downloaded from release, not committed)
+*.xcframework/
+*.xcframework.zip
+
+# macOS
+.DS_Store
+
+# Note: Generated Swift bindings (Sources/NobodyWho/Generated/) ARE committed
+# They are generated from Rust but must be versioned for SPM distribution
