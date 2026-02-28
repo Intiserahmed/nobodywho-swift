@@ -23,6 +23,11 @@ let package = Package(
             name: "NobodyWho",
             dependencies: ["NobodyWhoFFI"],
             path: "Sources/NobodyWho",
+            cSettings: [
+                .unsafeFlags(["-fmodule-map-file=NobodyWhoFFI.xcframework/macos-arm64_x86_64/NobodyWhoFFI.framework/Modules/module.modulemap"], .when(platforms: [.macOS])),
+                .unsafeFlags(["-fmodule-map-file=NobodyWhoFFI.xcframework/ios-arm64_x86_64-simulator/NobodyWhoFFI.framework/Modules/module.modulemap"], .when(platforms: [.iOS], configuration: .debug)),
+                .unsafeFlags(["-fmodule-map-file=NobodyWhoFFI.xcframework/ios-arm64/NobodyWhoFFI.framework/Modules/module.modulemap"], .when(platforms: [.iOS], configuration: .release))
+            ],
             linkerSettings: [
                 .linkedFramework("NobodyWhoFFI")
             ]
