@@ -18,16 +18,16 @@ Add this package to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/nobodywho-ooo/nobodywho", from: "0.1.0")
+    .package(url: "https://github.com/Intiserahmed/nobodywho-swift", from: "0.1.0")
 ]
 ```
 
 Or in Xcode:
 1. File → Add Package Dependencies
-2. Enter: `https://github.com/nobodywho-ooo/nobodywho`
+2. Enter: `https://github.com/Intiserahmed/nobodywho-swift`
 3. Select version `0.1.0` or later
 
-**That's it!** SPM automatically downloads the pre-built XCFramework from GitHub releases.
+**That's it!** SPM automatically downloads the pre-built XCFramework from the main repo's GitHub releases.
 
 ### Local Development
 
@@ -35,8 +35,8 @@ For contributors building from source:
 
 ```bash
 # Clone the repository
-git clone https://github.com/nobodywho-ooo/nobodywho
-cd nobodywho/swift
+git clone https://github.com/Intiserahmed/nobodywho-swift
+cd nobodywho-swift
 
 # Build the XCFramework
 ./scripts/build_xcframework.sh
