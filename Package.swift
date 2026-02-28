@@ -22,7 +22,10 @@ let package = Package(
         .target(
             name: "NobodyWho",
             dependencies: ["NobodyWhoFFI"],
-            path: "Sources/NobodyWho"
+            path: "Sources/NobodyWho",
+            linkerSettings: [
+                .linkedFramework("NobodyWhoFFI")
+            ]
         ),
         // XCFramework distributed via GitHub releases from the main nobodywho repo
         .binaryTarget(
