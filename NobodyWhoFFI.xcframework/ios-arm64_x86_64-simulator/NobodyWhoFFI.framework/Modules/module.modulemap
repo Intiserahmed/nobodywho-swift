@@ -1,0 +1,5 @@
+framework module NobodyWhoFFIFFI {
+    umbrella header "NobodyWhoFFIFFI.h"
+    export *
+    module * { export * }
+}

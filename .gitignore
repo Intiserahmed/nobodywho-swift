@@ -11,9 +11,13 @@ xcuserdata/
 !*.xcodeproj/project.pbxproj
 !*.xcodeproj/xcshareddata/
 
-# XCFramework (downloaded from release, not committed)
-*.xcframework/
+# XCFramework - the root NobodyWhoFFI.xcframework IS committed for SPM
+# Only ignore other xcframeworks and build artifacts
+.build/**/*.xcframework/
+DerivedData/**/*.xcframework/
 *.xcframework.zip
+# But don't ignore the bundled one:
+!NobodyWhoFFI.xcframework/
 
 # macOS
 .DS_Store

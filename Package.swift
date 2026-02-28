@@ -27,11 +27,10 @@ let package = Package(
                 .linkedFramework("NobodyWhoFFI")
             ]
         ),
-        // XCFramework distributed via GitHub releases from the main nobodywho repo
+        // XCFramework bundled in the repo for reliable SPM distribution
         .binaryTarget(
             name: "NobodyWhoFFI",
-            url: "https://github.com/Intiserahmed/nobodywho/releases/download/v0.1.0/NobodyWhoFFI.xcframework.zip",
-            checksum: "120b7e51aef498ae958d32a7adb79ab02839e8e8bf3963a0382af1b2b7138626"
+            path: "NobodyWhoFFI.xcframework"
         ),
         .executableTarget(
             name: "NobodyWhoTestCLI",
