@@ -19,23 +19,28 @@ let package = Package(
     ],
     dependencies: [],
     targets: [
+        // System library target that provides C module with type definitions
+        .systemLibrary(
+            name: "NobodyWhoFFIFFI",
+            path: "Sources/NobodyWhoFFIFFI"
+        ),
         .target(
             name: "NobodyWho",
-            dependencies: ["NobodyWhoFFI"],
-            path: "Sources/NobodyWho",
-            cSettings: [
-                .unsafeFlags(["-fmodule-map-file=NobodyWhoFFI.xcframework/macos-arm64_x86_64/NobodyWhoFFI.framework/Modules/module.modulemap"], .when(platforms: [.macOS])),
-                .unsafeFlags(["-fmodule-map-file=NobodyWhoFFI.xcframework/ios-arm64_x86_64-simulator/NobodyWhoFFI.framework/Modules/module.modulemap"], .when(platforms: [.iOS], configuration: .debug)),
-                .unsafeFlags(["-fmodule-map-file=NobodyWhoFFI.xcframework/ios-arm64/NobodyWhoFFI.framework/Modules/module.modulemap"], .when(platforms: [.iOS], configuration: .release))
+            dependencies: [
+                "NobodyWhoFFIFFI",
+                "NobodyWhoFFI"
             ],
+            path: "Sources/NobodyWho",
             linkerSettings: [
                 .linkedFramework("NobodyWhoFFI")
             ]
         ),
-        // XCFramework bundled in the repo for reliable SPM distribution
+        // XCFramework distributed via GitHub Releases
+        // Update URL and checksum for each release
         .binaryTarget(
             name: "NobodyWhoFFI",
-            path: "NobodyWhoFFI.xcframework"
+            url: "https://github.com/Intiserahmed/nobodywho-swift/releases/download/v1.0.0/NobodyWhoFFI.xcframework.zip",
+            checksum: "45ab26d2d42cb65f41a1aaa9e425da932acf742994b3c96817e2b101596f9c61"
         ),
         .executableTarget(
             name: "NobodyWhoTestCLI",
