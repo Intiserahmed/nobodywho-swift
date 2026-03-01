@@ -26,3 +26,4 @@ DerivedData/**/*.xcframework/
 # They are generated from Rust but must be versioned for SPM distribution
 NobodyWhoFFI.xcframework/
 NobodyWhoFFI.xcframework.zip
+*.gguf
