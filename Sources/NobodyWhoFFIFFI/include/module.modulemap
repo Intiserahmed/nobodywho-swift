@@ -1,0 +1,4 @@
+module NobodyWhoFFIFFI {
+    header "NobodyWhoFFIFFI.h"
+    export *
+}

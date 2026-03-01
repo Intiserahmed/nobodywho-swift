@@ -24,3 +24,5 @@ DerivedData/**/*.xcframework/
 
 # Note: Generated Swift bindings (Sources/NobodyWho/Generated/) ARE committed
 # They are generated from Rust but must be versioned for SPM distribution
+NobodyWhoFFI.xcframework/
+NobodyWhoFFI.xcframework.zip
