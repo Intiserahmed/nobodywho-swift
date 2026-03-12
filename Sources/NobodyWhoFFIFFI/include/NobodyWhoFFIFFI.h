@@ -268,6 +268,46 @@ RustBuffer uniffi_nobodywho_fn_method_chat_ask_blocking(uint64_t ptr, RustBuffer
 RustBuffer uniffi_nobodywho_fn_method_chat_history(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_CLONE_CROSSENCODER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_CLONE_CROSSENCODER
+uint64_t uniffi_nobodywho_fn_clone_crossencoder(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FREE_CROSSENCODER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FREE_CROSSENCODER
+void uniffi_nobodywho_fn_free_crossencoder(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_CROSSENCODER_RANK
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_CROSSENCODER_RANK
+RustBuffer uniffi_nobodywho_fn_method_crossencoder_rank(uint64_t ptr, RustBuffer query, RustBuffer documents, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_CROSSENCODER_RANK_AND_SORT
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_CROSSENCODER_RANK_AND_SORT
+RustBuffer uniffi_nobodywho_fn_method_crossencoder_rank_and_sort(uint64_t ptr, RustBuffer query, RustBuffer documents, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_CLONE_EMBEDDER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_CLONE_EMBEDDER
+uint64_t uniffi_nobodywho_fn_clone_embedder(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FREE_EMBEDDER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FREE_EMBEDDER
+void uniffi_nobodywho_fn_free_embedder(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_EMBEDDER_EMBED
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_EMBEDDER_EMBED
+RustBuffer uniffi_nobodywho_fn_method_embedder_embed(uint64_t ptr, RustBuffer text, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_EMBEDDER_EMBED_BATCH
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_METHOD_EMBEDDER_EMBED_BATCH
+RustBuffer uniffi_nobodywho_fn_method_embedder_embed_batch(uint64_t ptr, RustBuffer texts, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_CLONE_MODEL
 #define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_CLONE_MODEL
 uint64_t uniffi_nobodywho_fn_clone_model(uint64_t handle, RustCallStatus *_Nonnull out_status
@@ -287,6 +327,16 @@ RustBuffer uniffi_nobodywho_fn_method_model_path(uint64_t ptr, RustCallStatus *_
 #define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FUNC_INIT_LOGGING
 void uniffi_nobodywho_fn_func_init_logging(RustCallStatus *_Nonnull out_status
     
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FUNC_LOAD_CROSS_ENCODER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FUNC_LOAD_CROSS_ENCODER
+uint64_t uniffi_nobodywho_fn_func_load_cross_encoder(RustBuffer path, int8_t use_gpu, uint32_t context_size, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FUNC_LOAD_EMBEDDER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FUNC_LOAD_EMBEDDER
+uint64_t uniffi_nobodywho_fn_func_load_embedder(RustBuffer path, int8_t use_gpu, uint32_t context_size, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_FN_FUNC_LOAD_MODEL
@@ -560,6 +610,18 @@ uint16_t uniffi_nobodywho_checksum_func_init_logging(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_FUNC_LOAD_CROSS_ENCODER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_FUNC_LOAD_CROSS_ENCODER
+uint16_t uniffi_nobodywho_checksum_func_load_cross_encoder(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_FUNC_LOAD_EMBEDDER
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_FUNC_LOAD_EMBEDDER
+uint16_t uniffi_nobodywho_checksum_func_load_embedder(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_FUNC_LOAD_MODEL
 #define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_FUNC_LOAD_MODEL
 uint16_t uniffi_nobodywho_checksum_func_load_model(void
@@ -575,6 +637,30 @@ uint16_t uniffi_nobodywho_checksum_method_chat_ask_blocking(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_CHAT_HISTORY
 #define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_CHAT_HISTORY
 uint16_t uniffi_nobodywho_checksum_method_chat_history(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_CROSSENCODER_RANK
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_CROSSENCODER_RANK
+uint16_t uniffi_nobodywho_checksum_method_crossencoder_rank(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_CROSSENCODER_RANK_AND_SORT
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_CROSSENCODER_RANK_AND_SORT
+uint16_t uniffi_nobodywho_checksum_method_crossencoder_rank_and_sort(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_EMBEDDER_EMBED
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_EMBEDDER_EMBED
+uint16_t uniffi_nobodywho_checksum_method_embedder_embed(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_EMBEDDER_EMBED_BATCH
+#define UNIFFI_FFIDEF_UNIFFI_NOBODYWHO_CHECKSUM_METHOD_EMBEDDER_EMBED_BATCH
+uint16_t uniffi_nobodywho_checksum_method_embedder_embed_batch(void
     
 );
 #endif
