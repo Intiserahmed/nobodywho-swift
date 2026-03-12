@@ -11,19 +11,16 @@ xcuserdata/
 !*.xcodeproj/project.pbxproj
 !*.xcodeproj/xcshareddata/
 
-# XCFramework - the root NobodyWhoFFI.xcframework IS committed for SPM
-# Only ignore other xcframeworks and build artifacts
+# XCFramework - built by CI, not committed to repo
 .build/**/*.xcframework/
 DerivedData/**/*.xcframework/
+NobodyWhoFFI.xcframework/
+NobodyWhoFFI.xcframework.zip
 *.xcframework.zip
-# But don't ignore the bundled one:
-!NobodyWhoFFI.xcframework/
 
 # macOS
 .DS_Store
 
 # Note: Generated Swift bindings (Sources/NobodyWho/Generated/) ARE committed
 # They are generated from Rust but must be versioned for SPM distribution
-NobodyWhoFFI.xcframework/
-NobodyWhoFFI.xcframework.zip
 *.gguf
