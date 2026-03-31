@@ -24,11 +24,10 @@ let package = Package(
             dependencies: ["NobodyWhoFFI"],
             path: "Sources/NobodyWho"
         ),
-        // XCFramework bundled in the repo. Also exposes the nobodywhoFFI C module
-        // used by the generated Swift bindings in Sources/NobodyWho/Generated/.
         .binaryTarget(
             name: "NobodyWhoFFI",
-            path: "NobodyWhoFFI.xcframework"
+            url: "https://github.com/Intiserahmed/nobodywho-swift/releases/download/v2.0.0/NobodyWhoFFI.xcframework.zip",
+            checksum: "a849fd80a0e0bf491afbd22b0d5b67cf9d1642ad813ff4e752b30292085f11e1"
         ),
         .executableTarget(
             name: "NobodyWhoTestCLI",
