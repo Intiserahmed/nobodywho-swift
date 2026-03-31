@@ -43,12 +43,12 @@ public class LlamaCppLanguageModel: LanguageModel {
     private let chat: Chat
 
     public init(modelPath: String, useGPU: Bool = true, config: ChatConfig) throws {
-        let model = try loadModel(path: modelPath, useGpu: useGPU)
+        let model = try loadModel(path: modelPath, useGpu: useGPU, mmprojPath: nil)
         self.chat = try Chat(model: model, config: config)
     }
 
     public func generate(prompt: String) throws -> String {
-        try chat.askBlocking(prompt: prompt)
+        try chat.ask(prompt: prompt).completed()
     }
 
     public func generateStream(prompt: String, onToken: (String) -> Void) throws {

@@ -22,12 +22,10 @@ let package = Package(
         .target(
             name: "NobodyWho",
             dependencies: ["NobodyWhoFFI"],
-            path: "Sources/NobodyWho",
-            linkerSettings: [
-                .linkedFramework("NobodyWhoFFI")
-            ]
+            path: "Sources/NobodyWho"
         ),
-        // XCFramework bundled in the repo for reliable SPM distribution
+        // XCFramework bundled in the repo. Also exposes the nobodywhoFFI C module
+        // used by the generated Swift bindings in Sources/NobodyWho/Generated/.
         .binaryTarget(
             name: "NobodyWhoFFI",
             path: "NobodyWhoFFI.xcframework"
