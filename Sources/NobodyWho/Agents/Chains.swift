@@ -2,7 +2,7 @@ import Foundation
 
 /// A composable retrieval or retrieval-and-inference pipeline.
 public protocol Chain {
-    func execute(query: String) throws -> String
+    func execute(query: String) async throws -> String
 }
 
 /// Retrieves relevant documents and returns them as a formatted string.
@@ -15,8 +15,8 @@ public class RetrievalChain: Chain {
         self.topK = topK
     }
 
-    public func execute(query: String) throws -> String {
-        let documents = try semanticMemory.search(query: query, topK: topK)
+    public func execute(query: String) async throws -> String {
+        let documents = try await semanticMemory.search(query: query, topK: topK)
         return documents.map { "[\($0.score)] \($0.text)" }.joined(separator: "\n\n")
     }
 }
@@ -40,17 +40,17 @@ public class RetrievalAndInferenceChain: Chain {
         self.promptTemplate = promptTemplate
     }
 
-    public func execute(query: String) throws -> String {
-        let documents = try semanticMemory.search(query: query, topK: topK)
+    public func execute(query: String) async throws -> String {
+        let documents = try await semanticMemory.search(query: query, topK: topK)
         let prompt = promptTemplate.build(query: query, documents: documents)
-        return try languageModel.generate(prompt: prompt)
+        return try await languageModel.generate(prompt: prompt)
     }
 
     /// Executes the chain and returns both the generated answer and the retrieved documents.
-    public func executeWithContext(query: String) throws -> (answer: String, documents: [ScoredDocument]) {
-        let documents = try semanticMemory.search(query: query, topK: topK)
+    public func executeWithContext(query: String) async throws -> (answer: String, documents: [ScoredDocument]) {
+        let documents = try await semanticMemory.search(query: query, topK: topK)
         let prompt = promptTemplate.build(query: query, documents: documents)
-        let answer = try languageModel.generate(prompt: prompt)
+        let answer = try await languageModel.generate(prompt: prompt)
         return (answer, documents)
     }
 }
@@ -77,14 +77,14 @@ public class HybridRetrievalAndInferenceChain: Chain {
         self.promptTemplate = promptTemplate
     }
 
-    public func execute(query: String) throws -> String {
-        let documents = try hybridMemory.search(
+    public func execute(query: String) async throws -> String {
+        let documents = try await hybridMemory.search(
             query: query,
             topK: topK,
             rerankCandidates: rerankCandidates
         )
         let prompt = promptTemplate.build(query: query, documents: documents)
-        return try languageModel.generate(prompt: prompt)
+        return try await languageModel.generate(prompt: prompt)
     }
 }
 

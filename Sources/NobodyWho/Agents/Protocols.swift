@@ -4,8 +4,8 @@ import Foundation
 
 /// Converts text into embedding vectors.
 public protocol EmbedderAgent {
-    func embed(_ text: String) throws -> [Float]
-    func embedBatch(_ texts: [String]) throws -> [[Float]]
+    func embed(_ text: String) async throws -> [Float]
+    func embedBatch(_ texts: [String]) async throws -> [[Float]]
 }
 
 /// Stores and retrieves vectors by cosine similarity.
@@ -19,17 +19,28 @@ public protocol VectorStore {
 
 /// Reranks documents by relevance to a query using a cross-encoder.
 public protocol Reranker {
-    func rank(query: String, documents: [String]) throws -> [Float]
-    func rankAndSort(query: String, documents: [String]) throws -> [RankedDocument]
+    func rank(query: String, documents: [String]) async throws -> [Float]
+    func rankAndSort(query: String, documents: [String]) async throws -> [RankedDocument]
 }
 
 /// Generates text from a prompt.
 public protocol LanguageModel {
-    func generate(prompt: String) throws -> String
-    func generateStream(prompt: String, onToken: (String) -> Void) throws
+    func generate(prompt: String) async throws -> String
+    func generateStream(prompt: String, onToken: (String) -> Void) async throws
 }
 
 // MARK: - Data Types
+
+/// A document with its relevance score, returned from a cross-encoder ranking.
+public struct RankedDocument: Codable, Equatable {
+    public let content: String
+    public let score: Float
+
+    public init(content: String, score: Float) {
+        self.content = content
+        self.score = score
+    }
+}
 
 /// A document returned from a vector search, with its relevance score.
 public struct ScoredDocument: Equatable {

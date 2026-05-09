@@ -2,39 +2,41 @@ import Foundation
 
 /// `EmbedderAgent` backed by a llama.cpp embedding model.
 public class LlamaCppEmbedder: EmbedderAgent {
-    private let embedder: Embedder
+    private let encoder: RustEncoder
 
-    public init(modelPath: String, useGPU: Bool = true, contextSize: UInt32 = 512) throws {
-        self.embedder = try loadEmbedder(path: modelPath, useGpu: useGPU, contextSize: contextSize)
+    public init(modelPath: String, useGPU: Bool = true, contextSize: UInt32 = 512) async throws {
+        let model = try await loadModel(modelPath: modelPath, useGpu: useGPU, projectionModelPath: nil, onDownloadProgress: nil)
+        self.encoder = RustEncoder(model: model, contextSize: contextSize)
     }
 
-    public func embed(_ text: String) throws -> [Float] {
-        try embedder.embed(text: text)
+    public func embed(_ text: String) async throws -> [Float] {
+        try await encoder.encode(text: text)
     }
 
-    public func embedBatch(_ texts: [String]) throws -> [[Float]] {
-        try embedder.embedBatch(texts: texts)
+    public func embedBatch(_ texts: [String]) async throws -> [[Float]] {
+        var results: [[Float]] = []
+        for text in texts { results.append(try await encoder.encode(text: text)) }
+        return results
     }
 }
 
 /// `Reranker` backed by a llama.cpp cross-encoder model.
 public class LlamaCppReranker: Reranker {
-    private let crossEncoder: CrossEncoder
+    private let crossEncoder: RustCrossEncoder
 
-    public init(modelPath: String, useGPU: Bool = true, contextSize: UInt32 = 4096) throws {
-        self.crossEncoder = try loadCrossEncoder(
-            path: modelPath,
-            useGpu: useGPU,
-            contextSize: contextSize
-        )
+    public init(modelPath: String, useGPU: Bool = true, contextSize: UInt32 = 4096) async throws {
+        let model = try await loadModel(modelPath: modelPath, useGpu: useGPU, projectionModelPath: nil, onDownloadProgress: nil)
+        self.crossEncoder = RustCrossEncoder(model: model, contextSize: contextSize)
     }
 
-    public func rank(query: String, documents: [String]) throws -> [Float] {
-        try crossEncoder.rank(query: query, documents: documents)
+    public func rank(query: String, documents: [String]) async throws -> [Float] {
+        try await crossEncoder.rank(query: query, documents: documents)
     }
 
-    public func rankAndSort(query: String, documents: [String]) throws -> [RankedDocument] {
-        try crossEncoder.rankAndSort(query: query, documents: documents)
+    public func rankAndSort(query: String, documents: [String]) async throws -> [RankedDocument] {
+        let json = try await crossEncoder.rankAndSortJson(query: query, documents: documents)
+        let data = Data(json.utf8)
+        return (try? JSONDecoder().decode([RankedDocument].self, from: data)) ?? []
     }
 }
 
@@ -42,18 +44,23 @@ public class LlamaCppReranker: Reranker {
 public class LlamaCppLanguageModel: LanguageModel {
     private let chat: Chat
 
-    public init(modelPath: String, useGPU: Bool = true, config: ChatConfig) throws {
-        let model = try loadModel(path: modelPath, useGpu: useGPU, mmprojPath: nil)
-        self.chat = try Chat(model: model, config: config)
+    public init(modelPath: String, useGPU: Bool = true, config: ChatConfig) async throws {
+        let model = try await loadModel(path: modelPath, useGpu: useGPU, mmprojPath: nil)
+        self.chat = Chat(model: model, config: config)
     }
 
-    public func generate(prompt: String) throws -> String {
-        try chat.ask(prompt: prompt).completed()
+    public func generate(prompt: String) async throws -> String {
+        let stream = chat.ask(message: prompt)
+        var out = ""
+        while let token = await stream.nextToken() { out += token }
+        _ = try await stream.completed()
+        return out
     }
 
-    public func generateStream(prompt: String, onToken: (String) -> Void) throws {
-        let response = try generate(prompt: prompt)
-        onToken(response)
+    public func generateStream(prompt: String, onToken: (String) -> Void) async throws {
+        let stream = chat.ask(message: prompt)
+        while let token = await stream.nextToken() { onToken(token) }
+        _ = try await stream.completed()
     }
 }
 

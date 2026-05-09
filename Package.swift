@@ -4,7 +4,7 @@ import PackageDescription
 let package = Package(
     name: "NobodyWho",
     platforms: [
-        .iOS(.v13),
+        .iOS(.v14),
         .macOS(.v11)
     ],
     products: [
@@ -26,8 +26,7 @@ let package = Package(
         ),
         .binaryTarget(
             name: "NobodyWhoFFI",
-            url: "https://github.com/Intiserahmed/nobodywho-swift/releases/download/v2.0.0/NobodyWhoFFI.xcframework.zip",
-            checksum: "a849fd80a0e0bf491afbd22b0d5b67cf9d1642ad813ff4e752b30292085f11e1"
+            path: "NobodyWhoFFI.xcframework"
         ),
         .executableTarget(
             name: "NobodyWhoTestCLI",

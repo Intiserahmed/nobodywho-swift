@@ -11,12 +11,13 @@ xcuserdata/
 !*.xcodeproj/project.pbxproj
 !*.xcodeproj/xcshareddata/
 
-# XCFramework - built by CI, not committed to repo
+# XCFramework and dSYMs - built by CI, not committed to repo
 .build/**/*.xcframework/
 DerivedData/**/*.xcframework/
 NobodyWhoFFI.xcframework/
 NobodyWhoFFI.xcframework.zip
 *.xcframework.zip
+dSYMs/
 
 # macOS
 .DS_Store

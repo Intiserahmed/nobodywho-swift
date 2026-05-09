@@ -414,7 +414,13 @@ fileprivate final class UniffiHandleMap<T>: @unchecked Sendable {
 
 
 // Public interface members begin here.
-
+// Magic number for the Rust proxy to call using the same mechanism as every other method,
+// to free the callback once it's dropped by Rust.
+private let IDX_CALLBACK_FREE: Int32 = 0
+// Callback return codes
+private let UNIFFI_CALLBACK_SUCCESS: Int32 = 0
+private let UNIFFI_CALLBACK_ERROR: Int32 = 1
+private let UNIFFI_CALLBACK_UNEXPECTED_ERROR: Int32 = 2
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -424,6 +430,38 @@ fileprivate struct FfiConverterUInt32: FfiConverterPrimitive {
     typealias SwiftType = UInt32
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterInt32: FfiConverterPrimitive {
+    typealias FfiType = Int32
+    typealias SwiftType = Int32
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int32 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int32, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
+    typealias FfiType = UInt64
+    typealias SwiftType = UInt64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> UInt64 {
         return try lift(readInt(&buf))
     }
 
@@ -516,16 +554,91 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 
-public protocol ChatProtocol: AnyObject, Sendable {
+public protocol RustChatProtocol: AnyObject, Sendable {
     
-    func ask(prompt: String)  -> TokenStream
+    /**
+     * Send a message and get a token stream for the response.
+     */
+    func ask(message: String)  -> RustTokenStream
     
-    func askWithPrompt(prompt: Prompt)  -> TokenStream
+    /**
+     * Phase 2 of two-phase inference: generate text using pre-computed image embeddings.
+     *
+     * The model does NOT need a mmproj loaded — pass `projection_model_path: None` to
+     * `load_model` for Phase 2 to save ~462MB of RAM.
+     */
+    func askWithEmbeddings(text: String, embeddings: [RustImageEmbedding])  -> RustTokenStream
     
-    func history() throws  -> [Message]
+    /**
+     * Send a multimodal prompt (text + images/audio) and get a token stream.
+     *
+     * `parts` is an ordered list of `PromptPart` items.
+     * Image and audio parts should contain a local file-system path.
+     */
+    func askWithPrompt(parts: [PromptPart])  -> RustTokenStream
+    
+    /**
+     * Get the current chat history as a list of messages.
+     */
+    func getChatHistory() async throws  -> [Message]
+    
+    /**
+     * Get the current sampler configuration as a JSON string.
+     */
+    func getSamplerConfigJson() async throws  -> String
+    
+    /**
+     * Get the current system prompt.
+     */
+    func getSystemPrompt() async throws  -> String?
+    
+    /**
+     * Get all template variables.
+     */
+    func getTemplateVariables() async throws  -> [String: Bool]
+    
+    /**
+     * Reset the chat context with a new system prompt and tools.
+     */
+    func resetContext(systemPrompt: String?, tools: [RustTool]?) async throws 
+    
+    /**
+     * Reset the chat history, keeping the system prompt and tools.
+     */
+    func resetHistory() async throws 
+    
+    /**
+     * Set the chat history from a list of messages.
+     */
+    func setChatHistory(messages: [Message]) async throws 
+    
+    /**
+     * Set the sampler configuration.
+     */
+    func setSamplerConfig(sampler: SamplerConfig) async throws 
+    
+    /**
+     * Set the system prompt.
+     */
+    func setSystemPrompt(systemPrompt: String?) async throws 
+    
+    /**
+     * Set a template variable.
+     */
+    func setTemplateVariable(name: String, value: Bool) async throws 
+    
+    /**
+     * Set the tools available to the model.
+     */
+    func setTools(tools: [RustTool]) async throws 
+    
+    /**
+     * Stop the current generation.
+     */
+    func stopGeneration() 
     
 }
-open class Chat: ChatProtocol, @unchecked Sendable {
+open class RustChat: RustChatProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
 
     /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
@@ -562,52 +675,1179 @@ open class Chat: ChatProtocol, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_chat(self.handle, $0) }
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_rustchat(self.handle, $0) }
     }
-public convenience init(model: Model, config: ChatConfig)throws  {
+    /**
+     * Create a new chat session.
+     */
+public convenience init(model: RustModel, systemPrompt: String?, contextSize: UInt32, templateVariables: [String: Bool]?, tools: [RustTool]?, sampler: SamplerConfig?) {
     let handle =
-        try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_constructor_chat_new(
-        FfiConverterTypeModel_lower(model),
-        FfiConverterTypeChatConfig_lower(config),$0
+        try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_constructor_rustchat_new(
+        FfiConverterTypeRustModel_lower(model),
+        FfiConverterOptionString.lower(systemPrompt),
+        FfiConverterUInt32.lower(contextSize),
+        FfiConverterOptionDictionaryStringBool.lower(templateVariables),
+        FfiConverterOptionSequenceTypeRustTool.lower(tools),
+        FfiConverterOptionTypeSamplerConfig.lower(sampler),$0
     )
 }
     self.init(unsafeFromHandle: handle)
 }
 
     deinit {
-        try! rustCall { uniffi_nobodywho_uniffi_fn_free_chat(handle, $0) }
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_rustchat(handle, $0) }
     }
 
     
 
     
-open func ask(prompt: String) -> TokenStream  {
-    return try!  FfiConverterTypeTokenStream_lift(try! rustCall() {
-    uniffi_nobodywho_uniffi_fn_method_chat_ask(
+    /**
+     * Send a message and get a token stream for the response.
+     */
+open func ask(message: String) -> RustTokenStream  {
+    return try!  FfiConverterTypeRustTokenStream_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_rustchat_ask(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(prompt),$0
+        FfiConverterString.lower(message),$0
     )
 })
 }
     
-open func askWithPrompt(prompt: Prompt) -> TokenStream  {
-    return try!  FfiConverterTypeTokenStream_lift(try! rustCall() {
-    uniffi_nobodywho_uniffi_fn_method_chat_ask_with_prompt(
+    /**
+     * Phase 2 of two-phase inference: generate text using pre-computed image embeddings.
+     *
+     * The model does NOT need a mmproj loaded — pass `projection_model_path: None` to
+     * `load_model` for Phase 2 to save ~462MB of RAM.
+     */
+open func askWithEmbeddings(text: String, embeddings: [RustImageEmbedding]) -> RustTokenStream  {
+    return try!  FfiConverterTypeRustTokenStream_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_rustchat_ask_with_embeddings(
             self.uniffiCloneHandle(),
-        FfiConverterTypePrompt_lower(prompt),$0
+        FfiConverterString.lower(text),
+        FfiConverterSequenceTypeRustImageEmbedding.lower(embeddings),$0
     )
 })
 }
     
-open func history()throws  -> [Message]  {
-    return try  FfiConverterSequenceTypeMessage.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_method_chat_history(
+    /**
+     * Send a multimodal prompt (text + images/audio) and get a token stream.
+     *
+     * `parts` is an ordered list of `PromptPart` items.
+     * Image and audio parts should contain a local file-system path.
+     */
+open func askWithPrompt(parts: [PromptPart]) -> RustTokenStream  {
+    return try!  FfiConverterTypeRustTokenStream_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_rustchat_ask_with_prompt(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypePromptPart.lower(parts),$0
+    )
+})
+}
+    
+    /**
+     * Get the current chat history as a list of messages.
+     */
+open func getChatHistory()async throws  -> [Message]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_get_chat_history(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceTypeMessage.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Get the current sampler configuration as a JSON string.
+     */
+open func getSamplerConfigJson()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_get_sampler_config_json(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Get the current system prompt.
+     */
+open func getSystemPrompt()async throws  -> String?  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_get_system_prompt(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Get all template variables.
+     */
+open func getTemplateVariables()async throws  -> [String: Bool]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_get_template_variables(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterDictionaryStringBool.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Reset the chat context with a new system prompt and tools.
+     */
+open func resetContext(systemPrompt: String?, tools: [RustTool]?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_reset_context(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionString.lower(systemPrompt),FfiConverterOptionSequenceTypeRustTool.lower(tools)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_void,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_void,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Reset the chat history, keeping the system prompt and tools.
+     */
+open func resetHistory()async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_reset_history(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_void,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_void,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Set the chat history from a list of messages.
+     */
+open func setChatHistory(messages: [Message])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_set_chat_history(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeMessage.lower(messages)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_void,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_void,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Set the sampler configuration.
+     */
+open func setSamplerConfig(sampler: SamplerConfig)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_set_sampler_config(
+                    self.uniffiCloneHandle(),
+                    FfiConverterTypeSamplerConfig_lower(sampler)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_void,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_void,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Set the system prompt.
+     */
+open func setSystemPrompt(systemPrompt: String?)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_set_system_prompt(
+                    self.uniffiCloneHandle(),
+                    FfiConverterOptionString.lower(systemPrompt)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_void,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_void,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Set a template variable.
+     */
+open func setTemplateVariable(name: String, value: Bool)async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_set_template_variable(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(name),FfiConverterBool.lower(value)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_void,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_void,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Set the tools available to the model.
+     */
+open func setTools(tools: [RustTool])async throws   {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustchat_set_tools(
+                    self.uniffiCloneHandle(),
+                    FfiConverterSequenceTypeRustTool.lower(tools)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_void,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_void,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_void,
+            liftFunc: { $0 },
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Stop the current generation.
+     */
+open func stopGeneration()  {try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_rustchat_stop_generation(
+            self.uniffiCloneHandle(),$0
+    )
+}
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRustChat: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = RustChat
+
+    public static func lift(_ handle: UInt64) throws -> RustChat {
+        return RustChat(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: RustChat) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RustChat {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RustChat, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustChat_lift(_ handle: UInt64) throws -> RustChat {
+    return try FfiConverterTypeRustChat.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustChat_lower(_ value: RustChat) -> UInt64 {
+    return FfiConverterTypeRustChat.lower(value)
+}
+
+
+
+
+
+
+public protocol RustCrossEncoderProtocol: AnyObject, Sendable {
+    
+    /**
+     * Rank documents by relevance to a query. Returns similarity scores.
+     */
+    func rank(query: String, documents: [String]) async throws  -> [Float]
+    
+    /**
+     * Rank documents and return them sorted by descending relevance.
+     * Returns a JSON string of [document, score] pairs since UniFFI
+     * doesn't support tuples directly.
+     */
+    func rankAndSortJson(query: String, documents: [String]) async throws  -> String
+    
+}
+open class RustCrossEncoder: RustCrossEncoderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_rustcrossencoder(self.handle, $0) }
+    }
+    /**
+     * Create a new cross-encoder for ranking documents by relevance.
+     */
+public convenience init(model: RustModel, contextSize: UInt32?) {
+    let handle =
+        try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_constructor_rustcrossencoder_new(
+        FfiConverterTypeRustModel_lower(model),
+        FfiConverterOptionUInt32.lower(contextSize),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_rustcrossencoder(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Rank documents by relevance to a query. Returns similarity scores.
+     */
+open func rank(query: String, documents: [String])async throws  -> [Float]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustcrossencoder_rank(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(query),FfiConverterSequenceString.lower(documents)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceFloat.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Rank documents and return them sorted by descending relevance.
+     * Returns a JSON string of [document, score] pairs since UniFFI
+     * doesn't support tuples directly.
+     */
+open func rankAndSortJson(query: String, documents: [String])async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustcrossencoder_rank_and_sort_json(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(query),FfiConverterSequenceString.lower(documents)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRustCrossEncoder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = RustCrossEncoder
+
+    public static func lift(_ handle: UInt64) throws -> RustCrossEncoder {
+        return RustCrossEncoder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: RustCrossEncoder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RustCrossEncoder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RustCrossEncoder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustCrossEncoder_lift(_ handle: UInt64) throws -> RustCrossEncoder {
+    return try FfiConverterTypeRustCrossEncoder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustCrossEncoder_lower(_ value: RustCrossEncoder) -> UInt64 {
+    return FfiConverterTypeRustCrossEncoder.lower(value)
+}
+
+
+
+
+
+
+public protocol RustEncoderProtocol: AnyObject, Sendable {
+    
+    /**
+     * Encode text into an embedding vector.
+     */
+    func encode(text: String) async throws  -> [Float]
+    
+}
+open class RustEncoder: RustEncoderProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_rustencoder(self.handle, $0) }
+    }
+    /**
+     * Create a new encoder for generating text embeddings.
+     */
+public convenience init(model: RustModel, contextSize: UInt32?) {
+    let handle =
+        try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_constructor_rustencoder_new(
+        FfiConverterTypeRustModel_lower(model),
+        FfiConverterOptionUInt32.lower(contextSize),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_rustencoder(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Encode text into an embedding vector.
+     */
+open func encode(text: String)async throws  -> [Float]  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rustencoder_encode(
+                    self.uniffiCloneHandle(),
+                    FfiConverterString.lower(text)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterSequenceFloat.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRustEncoder: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = RustEncoder
+
+    public static func lift(_ handle: UInt64) throws -> RustEncoder {
+        return RustEncoder(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: RustEncoder) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RustEncoder {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RustEncoder, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustEncoder_lift(_ handle: UInt64) throws -> RustEncoder {
+    return try FfiConverterTypeRustEncoder.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustEncoder_lower(_ value: RustEncoder) -> UInt64 {
+    return FfiConverterTypeRustEncoder.lower(value)
+}
+
+
+
+
+
+
+public protocol RustImageEmbeddingProtocol: AnyObject, Sendable {
+    
+}
+open class RustImageEmbedding: RustImageEmbeddingProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_rustimageembedding(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_rustimageembedding(handle, $0) }
+    }
+
+    
+
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRustImageEmbedding: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = RustImageEmbedding
+
+    public static func lift(_ handle: UInt64) throws -> RustImageEmbedding {
+        return RustImageEmbedding(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: RustImageEmbedding) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RustImageEmbedding {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RustImageEmbedding, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustImageEmbedding_lift(_ handle: UInt64) throws -> RustImageEmbedding {
+    return try FfiConverterTypeRustImageEmbedding.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustImageEmbedding_lower(_ value: RustImageEmbedding) -> UInt64 {
+    return FfiConverterTypeRustImageEmbedding.lower(value)
+}
+
+
+
+
+
+
+public protocol RustModelProtocol: AnyObject, Sendable {
+    
+    /**
+     * Phase 1 of two-phase inference: encode an image into a self-contained embedding.
+     *
+     * The model must have been loaded with a `projection_model_path` (mmproj).
+     * After encoding all images, drop this model to free ~462MB before Phase 2.
+     */
+    func encodeImage(imagePath: String) throws  -> RustImageEmbedding
+    
+}
+open class RustModel: RustModelProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_rustmodel(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_rustmodel(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Phase 1 of two-phase inference: encode an image into a self-contained embedding.
+     *
+     * The model must have been loaded with a `projection_model_path` (mmproj).
+     * After encoding all images, drop this model to free ~462MB before Phase 2.
+     */
+open func encodeImage(imagePath: String)throws  -> RustImageEmbedding  {
+    return try  FfiConverterTypeRustImageEmbedding_lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
+    uniffi_nobodywho_uniffi_fn_method_rustmodel_encode_image(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(imagePath),$0
+    )
+})
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRustModel: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = RustModel
+
+    public static func lift(_ handle: UInt64) throws -> RustModel {
+        return RustModel(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: RustModel) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RustModel {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RustModel, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustModel_lift(_ handle: UInt64) throws -> RustModel {
+    return try FfiConverterTypeRustModel.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustModel_lower(_ value: RustModel) -> UInt64 {
+    return FfiConverterTypeRustModel.lower(value)
+}
+
+
+
+
+
+
+public protocol RustTokenStreamProtocol: AnyObject, Sendable {
+    
+    /**
+     * Wait for the full response to complete and return it.
+     */
+    func completed() async throws  -> String
+    
+    /**
+     * Get the next token. Returns None when generation is complete.
+     */
+    func nextToken() async  -> String?
+    
+}
+open class RustTokenStream: RustTokenStreamProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_rusttokenstream(self.handle, $0) }
+    }
+    // No primary constructor declared for this class.
+
+    deinit {
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_rusttokenstream(handle, $0) }
+    }
+
+    
+
+    
+    /**
+     * Wait for the full response to complete and return it.
+     */
+open func completed()async throws  -> String  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rusttokenstream_completed(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterString.lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+    
+    /**
+     * Get the next token. Returns None when generation is complete.
+     */
+open func nextToken()async  -> String?  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rusttokenstream_next_token(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionString.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+
+    
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRustTokenStream: FfiConverter {
+    typealias FfiType = UInt64
+    typealias SwiftType = RustTokenStream
+
+    public static func lift(_ handle: UInt64) throws -> RustTokenStream {
+        return RustTokenStream(unsafeFromHandle: handle)
+    }
+
+    public static func lower(_ value: RustTokenStream) -> UInt64 {
+        return value.uniffiCloneHandle()
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RustTokenStream {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+    public static func write(_ value: RustTokenStream, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustTokenStream_lift(_ handle: UInt64) throws -> RustTokenStream {
+    return try FfiConverterTypeRustTokenStream.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRustTokenStream_lower(_ value: RustTokenStream) -> UInt64 {
+    return FfiConverterTypeRustTokenStream.lower(value)
+}
+
+
+
+
+
+
+public protocol RustToolProtocol: AnyObject, Sendable {
+    
+    /**
+     * Get the JSON schema for this tool's parameters as a string.
+     */
+    func getSchemaJson()  -> String
+    
+    /**
+     * Await the next tool call from inference. Returns `None` when the tool is dropped.
+     */
+    func nextPendingCall() async  -> PendingToolCall?
+    
+    /**
+     * Resolve a pending tool call with the result string.
+     */
+    func resolvePendingCall(callId: String, result: String) 
+    
+}
+open class RustTool: RustToolProtocol, @unchecked Sendable {
+    fileprivate let handle: UInt64
+
+    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public struct NoHandle {
+        public init() {}
+    }
+
+    // TODO: We'd like this to be `private` but for Swifty reasons,
+    // we can't implement `FfiConverter` without making this `required` and we can't
+    // make it `required` without making it `public`.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    required public init(unsafeFromHandle handle: UInt64) {
+        self.handle = handle
+    }
+
+    // This constructor can be used to instantiate a fake object.
+    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
+    //
+    // - Warning:
+    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public init(noHandle: NoHandle) {
+        self.handle = 0
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public func uniffiCloneHandle() -> UInt64 {
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_rusttool(self.handle, $0) }
+    }
+    /**
+     * Create a tool with a synchronous callback (for Swift, Kotlin).
+     */
+public convenience init(name: String, description: String, parameters: [ToolParameter], callback: RustToolCallback) {
+    let handle =
+        try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_constructor_rusttool_new(
+        FfiConverterString.lower(name),
+        FfiConverterString.lower(description),
+        FfiConverterSequenceTypeToolParameter.lower(parameters),
+        FfiConverterCallbackInterfaceRustToolCallback_lower(callback),$0
+    )
+}
+    self.init(unsafeFromHandle: handle)
+}
+
+    deinit {
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_rusttool(handle, $0) }
+    }
+
+    
+    /**
+     * Create a tool with async callback support (for React Native).
+     *
+     * Use `next_pending_call` to await tool invocations and
+     * `resolve_pending_call` to return results. The inference thread
+     * blocks until resolved.
+     */
+public static func newAsync(name: String, description: String, parameters: [ToolParameter]) -> RustTool  {
+    return try!  FfiConverterTypeRustTool_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_constructor_rusttool_new_async(
+        FfiConverterString.lower(name),
+        FfiConverterString.lower(description),
+        FfiConverterSequenceTypeToolParameter.lower(parameters),$0
+    )
+})
+}
+    
+
+    
+    /**
+     * Get the JSON schema for this tool's parameters as a string.
+     */
+open func getSchemaJson() -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_rusttool_get_schema_json(
             self.uniffiCloneHandle(),$0
     )
 })
 }
     
+    /**
+     * Await the next tool call from inference. Returns `None` when the tool is dropped.
+     */
+open func nextPendingCall()async  -> PendingToolCall?  {
+    return
+        try!  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_method_rusttool_next_pending_call(
+                    self.uniffiCloneHandle()
+                    
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_rust_buffer,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_rust_buffer,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_rust_buffer,
+            liftFunc: FfiConverterOptionTypePendingToolCall.lift,
+            errorHandler: nil
+            
+        )
+}
+    
+    /**
+     * Resolve a pending tool call with the result string.
+     */
+open func resolvePendingCall(callId: String, result: String)  {try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_rusttool_resolve_pending_call(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(callId),
+        FfiConverterString.lower(result),$0
+    )
+}
+}
+    
 
     
 }
@@ -616,24 +1856,24 @@ open func history()throws  -> [Message]  {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeChat: FfiConverter {
+public struct FfiConverterTypeRustTool: FfiConverter {
     typealias FfiType = UInt64
-    typealias SwiftType = Chat
+    typealias SwiftType = RustTool
 
-    public static func lift(_ handle: UInt64) throws -> Chat {
-        return Chat(unsafeFromHandle: handle)
+    public static func lift(_ handle: UInt64) throws -> RustTool {
+        return RustTool(unsafeFromHandle: handle)
     }
 
-    public static func lower(_ value: Chat) -> UInt64 {
+    public static func lower(_ value: RustTool) -> UInt64 {
         return value.uniffiCloneHandle()
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Chat {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RustTool {
         let handle: UInt64 = try readInt(&buf)
         return try lift(handle)
     }
 
-    public static func write(_ value: Chat, into buf: inout [UInt8]) {
+    public static func write(_ value: RustTool, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -642,15 +1882,15 @@ public struct FfiConverterTypeChat: FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeChat_lift(_ handle: UInt64) throws -> Chat {
-    return try FfiConverterTypeChat.lift(handle)
+public func FfiConverterTypeRustTool_lift(_ handle: UInt64) throws -> RustTool {
+    return try FfiConverterTypeRustTool.lift(handle)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeChat_lower(_ value: Chat) -> UInt64 {
-    return FfiConverterTypeChat.lower(value)
+public func FfiConverterTypeRustTool_lower(_ value: RustTool) -> UInt64 {
+    return FfiConverterTypeRustTool.lower(value)
 }
 
 
@@ -658,14 +1898,75 @@ public func FfiConverterTypeChat_lower(_ value: Chat) -> UInt64 {
 
 
 
-public protocol CrossEncoderProtocol: AnyObject, Sendable {
+public protocol SamplerBuilderProtocol: AnyObject, Sendable {
     
-    func rank(query: String, documents: [String]) throws  -> [Float]
+    /**
+     * Sample from the probability distribution (weighted random selection).
+     */
+    func dist()  -> SamplerConfig
     
-    func rankAndSort(query: String, documents: [String]) throws  -> [RankedDocument]
+    /**
+     * DRY (Don't Repeat Yourself) sampler to reduce repetition.
+     */
+    func dry(multiplier: Float, base: Float, allowedLength: Int32, penaltyLastN: Int32, seqBreakers: [String])  -> SamplerBuilder
+    
+    /**
+     * Apply a grammar constraint to enforce structured output.
+     */
+    func grammar(grammar: String, triggerOn: String?, root: String)  -> SamplerBuilder
+    
+    /**
+     * Always select the most probable token (deterministic).
+     */
+    func greedy()  -> SamplerConfig
+    
+    /**
+     * Keep tokens with probability above min_p * (probability of most likely token).
+     */
+    func minP(minP: Float, minKeep: UInt32)  -> SamplerBuilder
+    
+    /**
+     * Use Mirostat v1 algorithm for perplexity-controlled sampling.
+     */
+    func mirostatV1(tau: Float, eta: Float, m: Int32)  -> SamplerConfig
+    
+    /**
+     * Use Mirostat v2 algorithm for perplexity-controlled sampling.
+     */
+    func mirostatV2(tau: Float, eta: Float)  -> SamplerConfig
+    
+    /**
+     * Apply repetition penalties to discourage repeated tokens.
+     */
+    func penalties(penaltyLastN: Int32, penaltyRepeat: Float, penaltyFreq: Float, penaltyPresent: Float)  -> SamplerBuilder
+    
+    /**
+     * Apply temperature scaling to the probability distribution.
+     */
+    func temperature(temperature: Float)  -> SamplerBuilder
+    
+    /**
+     * Keep only the top K most probable tokens.
+     */
+    func topK(topK: Int32)  -> SamplerBuilder
+    
+    /**
+     * Keep tokens whose cumulative probability is below top_p.
+     */
+    func topP(topP: Float, minKeep: UInt32)  -> SamplerBuilder
+    
+    /**
+     * Typical sampling: keeps tokens close to expected information content.
+     */
+    func typicalP(typP: Float, minKeep: UInt32)  -> SamplerBuilder
+    
+    /**
+     * XTC sampler that probabilistically excludes high-probability tokens.
+     */
+    func xtc(xtcProbability: Float, xtcThreshold: Float, minKeep: UInt32)  -> SamplerBuilder
     
 }
-open class CrossEncoder: CrossEncoderProtocol, @unchecked Sendable {
+open class SamplerBuilder: SamplerBuilderProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
 
     /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
@@ -702,499 +2003,196 @@ open class CrossEncoder: CrossEncoderProtocol, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_crossencoder(self.handle, $0) }
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_samplerbuilder(self.handle, $0) }
     }
-    // No primary constructor declared for this class.
-
-    deinit {
-        try! rustCall { uniffi_nobodywho_uniffi_fn_free_crossencoder(handle, $0) }
-    }
-
-    
-
-    
-open func rank(query: String, documents: [String])throws  -> [Float]  {
-    return try  FfiConverterSequenceFloat.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_method_crossencoder_rank(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(query),
-        FfiConverterSequenceString.lower(documents),$0
-    )
-})
-}
-    
-open func rankAndSort(query: String, documents: [String])throws  -> [RankedDocument]  {
-    return try  FfiConverterSequenceTypeRankedDocument.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_method_crossencoder_rank_and_sort(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(query),
-        FfiConverterSequenceString.lower(documents),$0
-    )
-})
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeCrossEncoder: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = CrossEncoder
-
-    public static func lift(_ handle: UInt64) throws -> CrossEncoder {
-        return CrossEncoder(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: CrossEncoder) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CrossEncoder {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: CrossEncoder, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCrossEncoder_lift(_ handle: UInt64) throws -> CrossEncoder {
-    return try FfiConverterTypeCrossEncoder.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeCrossEncoder_lower(_ value: CrossEncoder) -> UInt64 {
-    return FfiConverterTypeCrossEncoder.lower(value)
-}
-
-
-
-
-
-
-public protocol EmbedderProtocol: AnyObject, Sendable {
-    
-    func embed(text: String) throws  -> [Float]
-    
-    func embedBatch(texts: [String]) throws  -> [[Float]]
-    
-}
-open class Embedder: EmbedderProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_embedder(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        try! rustCall { uniffi_nobodywho_uniffi_fn_free_embedder(handle, $0) }
-    }
-
-    
-
-    
-open func embed(text: String)throws  -> [Float]  {
-    return try  FfiConverterSequenceFloat.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_method_embedder_embed(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(text),$0
-    )
-})
-}
-    
-open func embedBatch(texts: [String])throws  -> [[Float]]  {
-    return try  FfiConverterSequenceSequenceFloat.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_method_embedder_embed_batch(
-            self.uniffiCloneHandle(),
-        FfiConverterSequenceString.lower(texts),$0
-    )
-})
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeEmbedder: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = Embedder
-
-    public static func lift(_ handle: UInt64) throws -> Embedder {
-        return Embedder(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: Embedder) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Embedder {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: Embedder, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeEmbedder_lift(_ handle: UInt64) throws -> Embedder {
-    return try FfiConverterTypeEmbedder.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeEmbedder_lower(_ value: Embedder) -> UInt64 {
-    return FfiConverterTypeEmbedder.lower(value)
-}
-
-
-
-
-
-
-public protocol EncoderProtocol: AnyObject, Sendable {
-    
-    func encode(text: String) throws  -> [Float]
-    
-}
-open class Encoder: EncoderProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_encoder(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        try! rustCall { uniffi_nobodywho_uniffi_fn_free_encoder(handle, $0) }
-    }
-
-    
-
-    
-open func encode(text: String)throws  -> [Float]  {
-    return try  FfiConverterSequenceFloat.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_method_encoder_encode(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(text),$0
-    )
-})
-}
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeEncoder: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = Encoder
-
-    public static func lift(_ handle: UInt64) throws -> Encoder {
-        return Encoder(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: Encoder) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Encoder {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: Encoder, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeEncoder_lift(_ handle: UInt64) throws -> Encoder {
-    return try FfiConverterTypeEncoder.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeEncoder_lower(_ value: Encoder) -> UInt64 {
-    return FfiConverterTypeEncoder.lower(value)
-}
-
-
-
-
-
-
-public protocol ModelProtocol: AnyObject, Sendable {
-    
-}
-open class Model: ModelProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_model(self.handle, $0) }
-    }
-    // No primary constructor declared for this class.
-
-    deinit {
-        try! rustCall { uniffi_nobodywho_uniffi_fn_free_model(handle, $0) }
-    }
-
-    
-
-    
-
-    
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeModel: FfiConverter {
-    typealias FfiType = UInt64
-    typealias SwiftType = Model
-
-    public static func lift(_ handle: UInt64) throws -> Model {
-        return Model(unsafeFromHandle: handle)
-    }
-
-    public static func lower(_ value: Model) -> UInt64 {
-        return value.uniffiCloneHandle()
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Model {
-        let handle: UInt64 = try readInt(&buf)
-        return try lift(handle)
-    }
-
-    public static func write(_ value: Model, into buf: inout [UInt8]) {
-        writeInt(&buf, lower(value))
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeModel_lift(_ handle: UInt64) throws -> Model {
-    return try FfiConverterTypeModel.lift(handle)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeModel_lower(_ value: Model) -> UInt64 {
-    return FfiConverterTypeModel.lower(value)
-}
-
-
-
-
-
-
-public protocol PromptProtocol: AnyObject, Sendable {
-    
-    func pushImage(path: String) 
-    
-    func pushText(text: String) 
-    
-}
-open class Prompt: PromptProtocol, @unchecked Sendable {
-    fileprivate let handle: UInt64
-
-    /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public struct NoHandle {
-        public init() {}
-    }
-
-    // TODO: We'd like this to be `private` but for Swifty reasons,
-    // we can't implement `FfiConverter` without making this `required` and we can't
-    // make it `required` without making it `public`.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    required public init(unsafeFromHandle handle: UInt64) {
-        self.handle = handle
-    }
-
-    // This constructor can be used to instantiate a fake object.
-    // - Parameter noHandle: Placeholder value so we can have a constructor separate from the default empty one that may be implemented for classes extending [FFIObject].
-    //
-    // - Warning:
-    //     Any object instantiated with this constructor cannot be passed to an actual Rust-backed object. Since there isn't a backing handle the FFI lower functions will crash.
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public init(noHandle: NoHandle) {
-        self.handle = 0
-    }
-
-#if swift(>=5.8)
-    @_documentation(visibility: private)
-#endif
-    public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_prompt(self.handle, $0) }
-    }
+    /**
+     * Create a new SamplerBuilder to construct a custom sampler chain.
+     */
 public convenience init() {
     let handle =
         try! rustCall() {
-    uniffi_nobodywho_uniffi_fn_constructor_prompt_new($0
+    uniffi_nobodywho_uniffi_fn_constructor_samplerbuilder_new($0
     )
 }
     self.init(unsafeFromHandle: handle)
 }
 
     deinit {
-        try! rustCall { uniffi_nobodywho_uniffi_fn_free_prompt(handle, $0) }
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_samplerbuilder(handle, $0) }
     }
 
     
 
     
-open func pushImage(path: String)  {try! rustCall() {
-    uniffi_nobodywho_uniffi_fn_method_prompt_push_image(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(path),$0
+    /**
+     * Sample from the probability distribution (weighted random selection).
+     */
+open func dist() -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_dist(
+            self.uniffiCloneHandle(),$0
     )
-}
+})
 }
     
-open func pushText(text: String)  {try! rustCall() {
-    uniffi_nobodywho_uniffi_fn_method_prompt_push_text(
+    /**
+     * DRY (Don't Repeat Yourself) sampler to reduce repetition.
+     */
+open func dry(multiplier: Float, base: Float, allowedLength: Int32, penaltyLastN: Int32, seqBreakers: [String]) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_dry(
             self.uniffiCloneHandle(),
-        FfiConverterString.lower(text),$0
+        FfiConverterFloat.lower(multiplier),
+        FfiConverterFloat.lower(base),
+        FfiConverterInt32.lower(allowedLength),
+        FfiConverterInt32.lower(penaltyLastN),
+        FfiConverterSequenceString.lower(seqBreakers),$0
     )
+})
 }
+    
+    /**
+     * Apply a grammar constraint to enforce structured output.
+     */
+open func grammar(grammar: String, triggerOn: String?, root: String) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_grammar(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(grammar),
+        FfiConverterOptionString.lower(triggerOn),
+        FfiConverterString.lower(root),$0
+    )
+})
+}
+    
+    /**
+     * Always select the most probable token (deterministic).
+     */
+open func greedy() -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_greedy(
+            self.uniffiCloneHandle(),$0
+    )
+})
+}
+    
+    /**
+     * Keep tokens with probability above min_p * (probability of most likely token).
+     */
+open func minP(minP: Float, minKeep: UInt32) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_min_p(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(minP),
+        FfiConverterUInt32.lower(minKeep),$0
+    )
+})
+}
+    
+    /**
+     * Use Mirostat v1 algorithm for perplexity-controlled sampling.
+     */
+open func mirostatV1(tau: Float, eta: Float, m: Int32) -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_mirostat_v1(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(tau),
+        FfiConverterFloat.lower(eta),
+        FfiConverterInt32.lower(m),$0
+    )
+})
+}
+    
+    /**
+     * Use Mirostat v2 algorithm for perplexity-controlled sampling.
+     */
+open func mirostatV2(tau: Float, eta: Float) -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_mirostat_v2(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(tau),
+        FfiConverterFloat.lower(eta),$0
+    )
+})
+}
+    
+    /**
+     * Apply repetition penalties to discourage repeated tokens.
+     */
+open func penalties(penaltyLastN: Int32, penaltyRepeat: Float, penaltyFreq: Float, penaltyPresent: Float) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_penalties(
+            self.uniffiCloneHandle(),
+        FfiConverterInt32.lower(penaltyLastN),
+        FfiConverterFloat.lower(penaltyRepeat),
+        FfiConverterFloat.lower(penaltyFreq),
+        FfiConverterFloat.lower(penaltyPresent),$0
+    )
+})
+}
+    
+    /**
+     * Apply temperature scaling to the probability distribution.
+     */
+open func temperature(temperature: Float) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_temperature(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(temperature),$0
+    )
+})
+}
+    
+    /**
+     * Keep only the top K most probable tokens.
+     */
+open func topK(topK: Int32) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_top_k(
+            self.uniffiCloneHandle(),
+        FfiConverterInt32.lower(topK),$0
+    )
+})
+}
+    
+    /**
+     * Keep tokens whose cumulative probability is below top_p.
+     */
+open func topP(topP: Float, minKeep: UInt32) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_top_p(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(topP),
+        FfiConverterUInt32.lower(minKeep),$0
+    )
+})
+}
+    
+    /**
+     * Typical sampling: keeps tokens close to expected information content.
+     */
+open func typicalP(typP: Float, minKeep: UInt32) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_typical_p(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(typP),
+        FfiConverterUInt32.lower(minKeep),$0
+    )
+})
+}
+    
+    /**
+     * XTC sampler that probabilistically excludes high-probability tokens.
+     */
+open func xtc(xtcProbability: Float, xtcThreshold: Float, minKeep: UInt32) -> SamplerBuilder  {
+    return try!  FfiConverterTypeSamplerBuilder_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_method_samplerbuilder_xtc(
+            self.uniffiCloneHandle(),
+        FfiConverterFloat.lower(xtcProbability),
+        FfiConverterFloat.lower(xtcThreshold),
+        FfiConverterUInt32.lower(minKeep),$0
+    )
+})
 }
     
 
@@ -1205,24 +2203,24 @@ open func pushText(text: String)  {try! rustCall() {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypePrompt: FfiConverter {
+public struct FfiConverterTypeSamplerBuilder: FfiConverter {
     typealias FfiType = UInt64
-    typealias SwiftType = Prompt
+    typealias SwiftType = SamplerBuilder
 
-    public static func lift(_ handle: UInt64) throws -> Prompt {
-        return Prompt(unsafeFromHandle: handle)
+    public static func lift(_ handle: UInt64) throws -> SamplerBuilder {
+        return SamplerBuilder(unsafeFromHandle: handle)
     }
 
-    public static func lower(_ value: Prompt) -> UInt64 {
+    public static func lower(_ value: SamplerBuilder) -> UInt64 {
         return value.uniffiCloneHandle()
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Prompt {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SamplerBuilder {
         let handle: UInt64 = try readInt(&buf)
         return try lift(handle)
     }
 
-    public static func write(_ value: Prompt, into buf: inout [UInt8]) {
+    public static func write(_ value: SamplerBuilder, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -1231,15 +2229,15 @@ public struct FfiConverterTypePrompt: FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypePrompt_lift(_ handle: UInt64) throws -> Prompt {
-    return try FfiConverterTypePrompt.lift(handle)
+public func FfiConverterTypeSamplerBuilder_lift(_ handle: UInt64) throws -> SamplerBuilder {
+    return try FfiConverterTypeSamplerBuilder.lift(handle)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypePrompt_lower(_ value: Prompt) -> UInt64 {
-    return FfiConverterTypePrompt.lower(value)
+public func FfiConverterTypeSamplerBuilder_lower(_ value: SamplerBuilder) -> UInt64 {
+    return FfiConverterTypeSamplerBuilder.lower(value)
 }
 
 
@@ -1247,14 +2245,15 @@ public func FfiConverterTypePrompt_lower(_ value: Prompt) -> UInt64 {
 
 
 
-public protocol TokenStreamProtocol: AnyObject, Sendable {
+public protocol SamplerConfigProtocol: AnyObject, Sendable {
     
-    func completed() throws  -> String
-    
-    func nextToken()  -> String?
+    /**
+     * Serialize the sampler configuration to a JSON string.
+     */
+    func toJson() throws  -> String
     
 }
-open class TokenStream: TokenStreamProtocol, @unchecked Sendable {
+open class SamplerConfig: SamplerConfigProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
 
     /// Used to instantiate a [FFIObject] without an actual handle, for fakes in tests, mostly.
@@ -1291,28 +2290,34 @@ open class TokenStream: TokenStreamProtocol, @unchecked Sendable {
     @_documentation(visibility: private)
 #endif
     public func uniffiCloneHandle() -> UInt64 {
-        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_tokenstream(self.handle, $0) }
+        return try! rustCall { uniffi_nobodywho_uniffi_fn_clone_samplerconfig(self.handle, $0) }
     }
     // No primary constructor declared for this class.
 
     deinit {
-        try! rustCall { uniffi_nobodywho_uniffi_fn_free_tokenstream(handle, $0) }
+        try! rustCall { uniffi_nobodywho_uniffi_fn_free_samplerconfig(handle, $0) }
     }
 
     
-
-    
-open func completed()throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_method_tokenstream_completed(
-            self.uniffiCloneHandle(),$0
+    /**
+     * Deserialize a sampler configuration from a JSON string.
+     */
+public static func fromJson(jsonStr: String)throws  -> SamplerConfig  {
+    return try  FfiConverterTypeSamplerConfig_lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
+    uniffi_nobodywho_uniffi_fn_constructor_samplerconfig_from_json(
+        FfiConverterString.lower(jsonStr),$0
     )
 })
 }
     
-open func nextToken() -> String?  {
-    return try!  FfiConverterOptionString.lift(try! rustCall() {
-    uniffi_nobodywho_uniffi_fn_method_tokenstream_next_token(
+
+    
+    /**
+     * Serialize the sampler configuration to a JSON string.
+     */
+open func toJson()throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
+    uniffi_nobodywho_uniffi_fn_method_samplerconfig_to_json(
             self.uniffiCloneHandle(),$0
     )
 })
@@ -1326,24 +2331,24 @@ open func nextToken() -> String?  {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeTokenStream: FfiConverter {
+public struct FfiConverterTypeSamplerConfig: FfiConverter {
     typealias FfiType = UInt64
-    typealias SwiftType = TokenStream
+    typealias SwiftType = SamplerConfig
 
-    public static func lift(_ handle: UInt64) throws -> TokenStream {
-        return TokenStream(unsafeFromHandle: handle)
+    public static func lift(_ handle: UInt64) throws -> SamplerConfig {
+        return SamplerConfig(unsafeFromHandle: handle)
     }
 
-    public static func lower(_ value: TokenStream) -> UInt64 {
+    public static func lower(_ value: SamplerConfig) -> UInt64 {
         return value.uniffiCloneHandle()
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TokenStream {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SamplerConfig {
         let handle: UInt64 = try readInt(&buf)
         return try lift(handle)
     }
 
-    public static func write(_ value: TokenStream, into buf: inout [UInt8]) {
+    public static func write(_ value: SamplerConfig, into buf: inout [UInt8]) {
         writeInt(&buf, lower(value))
     }
 }
@@ -1352,57 +2357,53 @@ public struct FfiConverterTypeTokenStream: FfiConverter {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTokenStream_lift(_ handle: UInt64) throws -> TokenStream {
-    return try FfiConverterTypeTokenStream.lift(handle)
+public func FfiConverterTypeSamplerConfig_lift(_ handle: UInt64) throws -> SamplerConfig {
+    return try FfiConverterTypeSamplerConfig.lift(handle)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeTokenStream_lower(_ value: TokenStream) -> UInt64 {
-    return FfiConverterTypeTokenStream.lower(value)
+public func FfiConverterTypeSamplerConfig_lower(_ value: SamplerConfig) -> UInt64 {
+    return FfiConverterTypeSamplerConfig.lower(value)
 }
 
 
 
 
-public struct ChatConfig: Equatable, Hashable {
-    public var contextSize: UInt32
-    public var systemPrompt: String?
-    public var allowThinking: Bool
+public struct Asset: Equatable, Hashable {
+    public var id: String
+    public var path: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(contextSize: UInt32, systemPrompt: String?, allowThinking: Bool) {
-        self.contextSize = contextSize
-        self.systemPrompt = systemPrompt
-        self.allowThinking = allowThinking
+    public init(id: String, path: String) {
+        self.id = id
+        self.path = path
     }
 
     
 }
 
 #if compiler(>=6)
-extension ChatConfig: Sendable {}
+extension Asset: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeChatConfig: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatConfig {
+public struct FfiConverterTypeAsset: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Asset {
         return
-            try ChatConfig(
-                contextSize: FfiConverterUInt32.read(from: &buf), 
-                systemPrompt: FfiConverterOptionString.read(from: &buf), 
-                allowThinking: FfiConverterBool.read(from: &buf)
+            try Asset(
+                id: FfiConverterString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf)
         )
     }
 
-    public static func write(_ value: ChatConfig, into buf: inout [UInt8]) {
-        FfiConverterUInt32.write(value.contextSize, into: &buf)
-        FfiConverterOptionString.write(value.systemPrompt, into: &buf)
-        FfiConverterBool.write(value.allowThinking, into: &buf)
+    public static func write(_ value: Asset, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.id, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
     }
 }
 
@@ -1410,51 +2411,54 @@ public struct FfiConverterTypeChatConfig: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeChatConfig_lift(_ buf: RustBuffer) throws -> ChatConfig {
-    return try FfiConverterTypeChatConfig.lift(buf)
+public func FfiConverterTypeAsset_lift(_ buf: RustBuffer) throws -> Asset {
+    return try FfiConverterTypeAsset.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeChatConfig_lower(_ value: ChatConfig) -> RustBuffer {
-    return FfiConverterTypeChatConfig.lower(value)
+public func FfiConverterTypeAsset_lower(_ value: Asset) -> RustBuffer {
+    return FfiConverterTypeAsset.lower(value)
 }
 
 
-public struct RankedDocument: Equatable, Hashable {
-    public var content: String
-    public var score: Float
+/**
+ * A pending tool call waiting for resolution from the language binding.
+ */
+public struct PendingToolCall: Equatable, Hashable {
+    public var callId: String
+    public var argumentsJson: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(content: String, score: Float) {
-        self.content = content
-        self.score = score
+    public init(callId: String, argumentsJson: String) {
+        self.callId = callId
+        self.argumentsJson = argumentsJson
     }
 
     
 }
 
 #if compiler(>=6)
-extension RankedDocument: Sendable {}
+extension PendingToolCall: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRankedDocument: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RankedDocument {
+public struct FfiConverterTypePendingToolCall: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PendingToolCall {
         return
-            try RankedDocument(
-                content: FfiConverterString.read(from: &buf), 
-                score: FfiConverterFloat.read(from: &buf)
+            try PendingToolCall(
+                callId: FfiConverterString.read(from: &buf), 
+                argumentsJson: FfiConverterString.read(from: &buf)
         )
     }
 
-    public static func write(_ value: RankedDocument, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.content, into: &buf)
-        FfiConverterFloat.write(value.score, into: &buf)
+    public static func write(_ value: PendingToolCall, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.callId, into: &buf)
+        FfiConverterString.write(value.argumentsJson, into: &buf)
     }
 }
 
@@ -1462,15 +2466,15 @@ public struct FfiConverterTypeRankedDocument: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRankedDocument_lift(_ buf: RustBuffer) throws -> RankedDocument {
-    return try FfiConverterTypeRankedDocument.lift(buf)
+public func FfiConverterTypePendingToolCall_lift(_ buf: RustBuffer) throws -> PendingToolCall {
+    return try FfiConverterTypePendingToolCall.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRankedDocument_lower(_ value: RankedDocument) -> RustBuffer {
-    return FfiConverterTypeRankedDocument.lower(value)
+public func FfiConverterTypePendingToolCall_lower(_ value: PendingToolCall) -> RustBuffer {
+    return FfiConverterTypePendingToolCall.lower(value)
 }
 
 
@@ -1525,16 +2529,76 @@ public func FfiConverterTypeToolCall_lower(_ value: ToolCall) -> RustBuffer {
     return FfiConverterTypeToolCall.lower(value)
 }
 
+
+public struct ToolParameter: Equatable, Hashable {
+    public var name: String
+    /**
+     * JSON Schema for this parameter (e.g. `{"type": "string"}`).
+     */
+    public var schema: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, 
+        /**
+         * JSON Schema for this parameter (e.g. `{"type": "string"}`).
+         */schema: String) {
+        self.name = name
+        self.schema = schema
+    }
+
+    
+}
+
+#if compiler(>=6)
+extension ToolParameter: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeToolParameter: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ToolParameter {
+        return
+            try ToolParameter(
+                name: FfiConverterString.read(from: &buf), 
+                schema: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ToolParameter, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.schema, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeToolParameter_lift(_ buf: RustBuffer) throws -> ToolParameter {
+    return try FfiConverterTypeToolParameter.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeToolParameter_lower(_ value: ToolParameter) -> RustBuffer {
+    return FfiConverterTypeToolParameter.lower(value)
+}
+
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
 
 public enum Message: Equatable, Hashable {
     
-    case plain(role: Role, content: String
+    case user(content: String, assets: [Asset]
     )
-    case toolCalls(role: Role, content: String, toolCalls: [ToolCall]
+    case assistant(content: String, toolCalls: [ToolCall]?
     )
-    case toolResponse(role: Role, name: String, content: String
+    case system(content: String
+    )
+    case tool(name: String, content: String
     )
 
 
@@ -1555,13 +2619,16 @@ public struct FfiConverterTypeMessage: FfiConverterRustBuffer {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .plain(role: try FfiConverterTypeRole.read(from: &buf), content: try FfiConverterString.read(from: &buf)
+        case 1: return .user(content: try FfiConverterString.read(from: &buf), assets: try FfiConverterSequenceTypeAsset.read(from: &buf)
         )
         
-        case 2: return .toolCalls(role: try FfiConverterTypeRole.read(from: &buf), content: try FfiConverterString.read(from: &buf), toolCalls: try FfiConverterSequenceTypeToolCall.read(from: &buf)
+        case 2: return .assistant(content: try FfiConverterString.read(from: &buf), toolCalls: try FfiConverterOptionSequenceTypeToolCall.read(from: &buf)
         )
         
-        case 3: return .toolResponse(role: try FfiConverterTypeRole.read(from: &buf), name: try FfiConverterString.read(from: &buf), content: try FfiConverterString.read(from: &buf)
+        case 3: return .system(content: try FfiConverterString.read(from: &buf)
+        )
+        
+        case 4: return .tool(name: try FfiConverterString.read(from: &buf), content: try FfiConverterString.read(from: &buf)
         )
         
         default: throw UniffiInternalError.unexpectedEnumCase
@@ -1572,22 +2639,25 @@ public struct FfiConverterTypeMessage: FfiConverterRustBuffer {
         switch value {
         
         
-        case let .plain(role,content):
+        case let .user(content,assets):
             writeInt(&buf, Int32(1))
-            FfiConverterTypeRole.write(role, into: &buf)
             FfiConverterString.write(content, into: &buf)
+            FfiConverterSequenceTypeAsset.write(assets, into: &buf)
             
         
-        case let .toolCalls(role,content,toolCalls):
+        case let .assistant(content,toolCalls):
             writeInt(&buf, Int32(2))
-            FfiConverterTypeRole.write(role, into: &buf)
             FfiConverterString.write(content, into: &buf)
-            FfiConverterSequenceTypeToolCall.write(toolCalls, into: &buf)
+            FfiConverterOptionSequenceTypeToolCall.write(toolCalls, into: &buf)
             
         
-        case let .toolResponse(role,name,content):
+        case let .system(content):
             writeInt(&buf, Int32(3))
-            FfiConverterTypeRole.write(role, into: &buf)
+            FfiConverterString.write(content, into: &buf)
+            
+        
+        case let .tool(name,content):
+            writeInt(&buf, Int32(4))
             FfiConverterString.write(name, into: &buf)
             FfiConverterString.write(content, into: &buf)
             
@@ -1616,17 +2686,7 @@ public enum NobodyWhoError: Swift.Error, Equatable, Hashable, Foundation.Localiz
 
     
     
-    case LoadModel(message: String)
-    
-    case Completion(message: String)
-    
-    case CrossEncoder(message: String)
-    
-    case Embedder(message: String)
-    
-    case Encoder(message: String)
-    
-    case Worker(message: String)
+    case Error(message: String)
     
 
     
@@ -1655,27 +2715,7 @@ public struct FfiConverterTypeNobodyWhoError: FfiConverterRustBuffer {
         
 
         
-        case 1: return .LoadModel(
-            message: try FfiConverterString.read(from: &buf)
-        )
-        
-        case 2: return .Completion(
-            message: try FfiConverterString.read(from: &buf)
-        )
-        
-        case 3: return .CrossEncoder(
-            message: try FfiConverterString.read(from: &buf)
-        )
-        
-        case 4: return .Embedder(
-            message: try FfiConverterString.read(from: &buf)
-        )
-        
-        case 5: return .Encoder(
-            message: try FfiConverterString.read(from: &buf)
-        )
-        
-        case 6: return .Worker(
+        case 1: return .Error(
             message: try FfiConverterString.read(from: &buf)
         )
         
@@ -1690,18 +2730,8 @@ public struct FfiConverterTypeNobodyWhoError: FfiConverterRustBuffer {
         
 
         
-        case .LoadModel(_ /* message is ignored*/):
+        case .Error(_ /* message is ignored*/):
             writeInt(&buf, Int32(1))
-        case .Completion(_ /* message is ignored*/):
-            writeInt(&buf, Int32(2))
-        case .CrossEncoder(_ /* message is ignored*/):
-            writeInt(&buf, Int32(3))
-        case .Embedder(_ /* message is ignored*/):
-            writeInt(&buf, Int32(4))
-        case .Encoder(_ /* message is ignored*/):
-            writeInt(&buf, Int32(5))
-        case .Worker(_ /* message is ignored*/):
-            writeInt(&buf, Int32(6))
 
         
         }
@@ -1725,63 +2755,68 @@ public func FfiConverterTypeNobodyWhoError_lower(_ value: NobodyWhoError) -> Rus
 
 // Note that we don't yet support `indirect` for enums.
 // See https://github.com/mozilla/uniffi-rs/issues/396 for further discussion.
+/**
+ * A part of a multimodal prompt.  Mirrors the core `PromptPart` enum.
+ */
 
-public enum Role: Equatable, Hashable {
+public enum PromptPart: Equatable, Hashable {
     
-    case user
-    case assistant
-    case system
-    case tool
+    case text(content: String
+    )
+    case image(path: String
+    )
+    case audio(path: String
+    )
 
 
 
 }
 
 #if compiler(>=6)
-extension Role: Sendable {}
+extension PromptPart: Sendable {}
 #endif
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public struct FfiConverterTypeRole: FfiConverterRustBuffer {
-    typealias SwiftType = Role
+public struct FfiConverterTypePromptPart: FfiConverterRustBuffer {
+    typealias SwiftType = PromptPart
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Role {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PromptPart {
         let variant: Int32 = try readInt(&buf)
         switch variant {
         
-        case 1: return .user
+        case 1: return .text(content: try FfiConverterString.read(from: &buf)
+        )
         
-        case 2: return .assistant
+        case 2: return .image(path: try FfiConverterString.read(from: &buf)
+        )
         
-        case 3: return .system
-        
-        case 4: return .tool
+        case 3: return .audio(path: try FfiConverterString.read(from: &buf)
+        )
         
         default: throw UniffiInternalError.unexpectedEnumCase
         }
     }
 
-    public static func write(_ value: Role, into buf: inout [UInt8]) {
+    public static func write(_ value: PromptPart, into buf: inout [UInt8]) {
         switch value {
         
         
-        case .user:
+        case let .text(content):
             writeInt(&buf, Int32(1))
+            FfiConverterString.write(content, into: &buf)
+            
         
-        
-        case .assistant:
+        case let .image(path):
             writeInt(&buf, Int32(2))
+            FfiConverterString.write(path, into: &buf)
+            
         
-        
-        case .system:
+        case let .audio(path):
             writeInt(&buf, Int32(3))
-        
-        
-        case .tool:
-            writeInt(&buf, Int32(4))
-        
+            FfiConverterString.write(path, into: &buf)
+            
         }
     }
 }
@@ -1790,17 +2825,303 @@ public struct FfiConverterTypeRole: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRole_lift(_ buf: RustBuffer) throws -> Role {
-    return try FfiConverterTypeRole.lift(buf)
+public func FfiConverterTypePromptPart_lift(_ buf: RustBuffer) throws -> PromptPart {
+    return try FfiConverterTypePromptPart.lift(buf)
 }
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-public func FfiConverterTypeRole_lower(_ value: Role) -> RustBuffer {
-    return FfiConverterTypeRole.lower(value)
+public func FfiConverterTypePromptPart_lower(_ value: PromptPart) -> RustBuffer {
+    return FfiConverterTypePromptPart.lower(value)
 }
 
+
+
+
+
+/**
+ * Callback interface for download progress reporting. Implement this in your
+ * language to receive `(downloadedBytes, totalBytes)` events while a remote
+ * model is being downloaded. Throttled to ~10 Hz with a guaranteed final emit
+ * on completion. Not invoked for cached/local files.
+ */
+public protocol RustDownloadProgressCallback: AnyObject, Sendable {
+    
+    func onDownloadProgress(downloaded: UInt64, total: UInt64) 
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceRustDownloadProgressCallback {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceRustDownloadProgressCallback] = [UniffiVTableCallbackInterfaceRustDownloadProgressCallback(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfaceRustDownloadProgressCallback.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface RustDownloadProgressCallback: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfaceRustDownloadProgressCallback.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface RustDownloadProgressCallback: handle missing in uniffiClone")
+            }
+        },
+        onDownloadProgress: { (
+            uniffiHandle: UInt64,
+            downloaded: UInt64,
+            total: UInt64,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceRustDownloadProgressCallback.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onDownloadProgress(
+                     downloaded: try FfiConverterUInt64.lift(downloaded),
+                     total: try FfiConverterUInt64.lift(total)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitRustDownloadProgressCallback() {
+    uniffi_nobodywho_uniffi_fn_init_callback_vtable_rustdownloadprogresscallback(UniffiCallbackInterfaceRustDownloadProgressCallback.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceRustDownloadProgressCallback {
+    fileprivate static let handleMap = UniffiHandleMap<RustDownloadProgressCallback>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceRustDownloadProgressCallback : FfiConverter {
+    typealias SwiftType = RustDownloadProgressCallback
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceRustDownloadProgressCallback_lift(_ handle: UInt64) throws -> RustDownloadProgressCallback {
+    return try FfiConverterCallbackInterfaceRustDownloadProgressCallback.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceRustDownloadProgressCallback_lower(_ v: RustDownloadProgressCallback) -> UInt64 {
+    return FfiConverterCallbackInterfaceRustDownloadProgressCallback.lower(v)
+}
+
+
+
+
+/**
+ * Callback interface for tool functions.
+ * Implement this in your language to provide the tool's logic.
+ * The `call` method receives the tool arguments as a JSON string
+ * and should return the tool's result as a string.
+ */
+public protocol RustToolCallback: AnyObject, Sendable {
+    
+    func call(argumentsJson: String)  -> String
+    
+}
+
+
+// Put the implementation in a struct so we don't pollute the top-level namespace
+fileprivate struct UniffiCallbackInterfaceRustToolCallback {
+
+    // Create the VTable using a series of closures.
+    // Swift automatically converts these into C callback functions.
+    //
+    // This creates 1-element array, since this seems to be the only way to construct a const
+    // pointer that we can pass to the Rust code.
+    static let vtable: [UniffiVTableCallbackInterfaceRustToolCallback] = [UniffiVTableCallbackInterfaceRustToolCallback(
+        uniffiFree: { (uniffiHandle: UInt64) -> () in
+            do {
+                try FfiConverterCallbackInterfaceRustToolCallback.handleMap.remove(handle: uniffiHandle)
+            } catch {
+                print("Uniffi callback interface RustToolCallback: handle missing in uniffiFree")
+            }
+        },
+        uniffiClone: { (uniffiHandle: UInt64) -> UInt64 in
+            do {
+                return try FfiConverterCallbackInterfaceRustToolCallback.handleMap.clone(handle: uniffiHandle)
+            } catch {
+                fatalError("Uniffi callback interface RustToolCallback: handle missing in uniffiClone")
+            }
+        },
+        call: { (
+            uniffiHandle: UInt64,
+            argumentsJson: RustBuffer,
+            uniffiOutReturn: UnsafeMutablePointer<RustBuffer>,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> String in
+                guard let uniffiObj = try? FfiConverterCallbackInterfaceRustToolCallback.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.call(
+                     argumentsJson: try FfiConverterString.lift(argumentsJson)
+                )
+            }
+
+            
+            let writeReturn = { uniffiOutReturn.pointee = FfiConverterString.lower($0) }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        }
+    )]
+}
+
+private func uniffiCallbackInitRustToolCallback() {
+    uniffi_nobodywho_uniffi_fn_init_callback_vtable_rusttoolcallback(UniffiCallbackInterfaceRustToolCallback.vtable)
+}
+
+// FfiConverter protocol for callback interfaces
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterCallbackInterfaceRustToolCallback {
+    fileprivate static let handleMap = UniffiHandleMap<RustToolCallback>()
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+extension FfiConverterCallbackInterfaceRustToolCallback : FfiConverter {
+    typealias SwiftType = RustToolCallback
+    typealias FfiType = UInt64
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lift(_ handle: UInt64) throws -> SwiftType {
+        try handleMap.get(handle: handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        let handle: UInt64 = try readInt(&buf)
+        return try lift(handle)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func lower(_ v: SwiftType) -> UInt64 {
+        return handleMap.insert(obj: v)
+    }
+
+#if swift(>=5.8)
+    @_documentation(visibility: private)
+#endif
+    public static func write(_ v: SwiftType, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(v))
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceRustToolCallback_lift(_ handle: UInt64) throws -> RustToolCallback {
+    return try FfiConverterCallbackInterfaceRustToolCallback.lift(handle)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterCallbackInterfaceRustToolCallback_lower(_ v: RustToolCallback) -> UInt64 {
+    return FfiConverterCallbackInterfaceRustToolCallback.lower(v)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionUInt32: FfiConverterRustBuffer {
+    typealias SwiftType = UInt32?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterUInt32.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterUInt32.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
 
 #if swift(>=5.8)
 @_documentation(visibility: private)
@@ -1821,6 +3142,150 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
         switch try readInt(&buf) as Int8 {
         case 0: return nil
         case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeSamplerConfig: FfiConverterRustBuffer {
+    typealias SwiftType = SamplerConfig?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeSamplerConfig.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeSamplerConfig.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypePendingToolCall: FfiConverterRustBuffer {
+    typealias SwiftType = PendingToolCall?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypePendingToolCall.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypePendingToolCall.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionCallbackInterfaceRustDownloadProgressCallback: FfiConverterRustBuffer {
+    typealias SwiftType = RustDownloadProgressCallback?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterCallbackInterfaceRustDownloadProgressCallback.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterCallbackInterfaceRustDownloadProgressCallback.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeRustTool: FfiConverterRustBuffer {
+    typealias SwiftType = [RustTool]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeRustTool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeRustTool.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionSequenceTypeToolCall: FfiConverterRustBuffer {
+    typealias SwiftType = [ToolCall]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterSequenceTypeToolCall.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterSequenceTypeToolCall.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionDictionaryStringBool: FfiConverterRustBuffer {
+    typealias SwiftType = [String: Bool]?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterDictionaryStringBool.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterDictionaryStringBool.read(from: &buf)
         default: throw UniffiInternalError.unexpectedOptionalTag
         }
     }
@@ -1879,23 +3344,73 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceTypeRankedDocument: FfiConverterRustBuffer {
-    typealias SwiftType = [RankedDocument]
+fileprivate struct FfiConverterSequenceTypeRustImageEmbedding: FfiConverterRustBuffer {
+    typealias SwiftType = [RustImageEmbedding]
 
-    public static func write(_ value: [RankedDocument], into buf: inout [UInt8]) {
+    public static func write(_ value: [RustImageEmbedding], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for item in value {
-            FfiConverterTypeRankedDocument.write(item, into: &buf)
+            FfiConverterTypeRustImageEmbedding.write(item, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RankedDocument] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RustImageEmbedding] {
         let len: Int32 = try readInt(&buf)
-        var seq = [RankedDocument]()
+        var seq = [RustImageEmbedding]()
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
-            seq.append(try FfiConverterTypeRankedDocument.read(from: &buf))
+            seq.append(try FfiConverterTypeRustImageEmbedding.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeRustTool: FfiConverterRustBuffer {
+    typealias SwiftType = [RustTool]
+
+    public static func write(_ value: [RustTool], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeRustTool.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [RustTool] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [RustTool]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeRustTool.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeAsset: FfiConverterRustBuffer {
+    typealias SwiftType = [Asset]
+
+    public static func write(_ value: [Asset], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAsset.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Asset] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Asset]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAsset.read(from: &buf))
         }
         return seq
     }
@@ -1929,6 +3444,31 @@ fileprivate struct FfiConverterSequenceTypeToolCall: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeToolParameter: FfiConverterRustBuffer {
+    typealias SwiftType = [ToolParameter]
+
+    public static func write(_ value: [ToolParameter], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeToolParameter.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ToolParameter] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ToolParameter]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeToolParameter.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeMessage: FfiConverterRustBuffer {
     typealias SwiftType = [Message]
 
@@ -1954,65 +3494,209 @@ fileprivate struct FfiConverterSequenceTypeMessage: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterSequenceSequenceFloat: FfiConverterRustBuffer {
-    typealias SwiftType = [[Float]]
+fileprivate struct FfiConverterSequenceTypePromptPart: FfiConverterRustBuffer {
+    typealias SwiftType = [PromptPart]
 
-    public static func write(_ value: [[Float]], into buf: inout [UInt8]) {
+    public static func write(_ value: [PromptPart], into buf: inout [UInt8]) {
         let len = Int32(value.count)
         writeInt(&buf, len)
         for item in value {
-            FfiConverterSequenceFloat.write(item, into: &buf)
+            FfiConverterTypePromptPart.write(item, into: &buf)
         }
     }
 
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [[Float]] {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [PromptPart] {
         let len: Int32 = try readInt(&buf)
-        var seq = [[Float]]()
+        var seq = [PromptPart]()
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
-            seq.append(try FfiConverterSequenceFloat.read(from: &buf))
+            seq.append(try FfiConverterTypePromptPart.read(from: &buf))
         }
         return seq
     }
 }
-public func initLogging()  {try! rustCall() {
-    uniffi_nobodywho_uniffi_fn_func_init_logging($0
-    )
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterDictionaryStringBool: FfiConverterRustBuffer {
+    public static func write(_ value: [String: Bool], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for (key, value) in value {
+            FfiConverterString.write(key, into: &buf)
+            FfiConverterBool.write(value, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [String: Bool] {
+        let len: Int32 = try readInt(&buf)
+        var dict = [String: Bool]()
+        dict.reserveCapacity(Int(len))
+        for _ in 0..<len {
+            let key = try FfiConverterString.read(from: &buf)
+            let value = try FfiConverterBool.read(from: &buf)
+            dict[key] = value
+        }
+        return dict
+    }
 }
+private let UNIFFI_RUST_FUTURE_POLL_READY: Int8 = 0
+private let UNIFFI_RUST_FUTURE_POLL_WAKE: Int8 = 1
+
+fileprivate let uniffiContinuationHandleMap = UniffiHandleMap<UnsafeContinuation<Int8, Never>>()
+
+fileprivate func uniffiRustCallAsync<F, T>(
+    rustFutureFunc: () -> UInt64,
+    pollFunc: (UInt64, @escaping UniffiRustFutureContinuationCallback, UInt64) -> (),
+    completeFunc: (UInt64, UnsafeMutablePointer<RustCallStatus>) -> F,
+    freeFunc: (UInt64) -> (),
+    liftFunc: (F) throws -> T,
+    errorHandler: ((RustBuffer) throws -> Swift.Error)?
+) async throws -> T {
+    // Make sure to call the ensure init function since future creation doesn't have a
+    // RustCallStatus param, so doesn't use makeRustCall()
+    uniffiEnsureNobodywhoUniffiInitialized()
+    let rustFuture = rustFutureFunc()
+    defer {
+        freeFunc(rustFuture)
+    }
+    var pollResult: Int8;
+    repeat {
+        pollResult = await withUnsafeContinuation {
+            pollFunc(
+                rustFuture,
+                { handle, pollResult in
+                    uniffiFutureContinuationCallback(handle: handle, pollResult: pollResult)
+                },
+                uniffiContinuationHandleMap.insert(obj: $0)
+            )
+        }
+    } while pollResult != UNIFFI_RUST_FUTURE_POLL_READY
+
+    return try liftFunc(makeRustCall(
+        { completeFunc(rustFuture, $0) },
+        errorHandler: errorHandler
+    ))
 }
-public func loadCrossEncoder(path: String, useGpu: Bool, contextSize: UInt32)throws  -> CrossEncoder  {
-    return try  FfiConverterTypeCrossEncoder_lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_func_load_cross_encoder(
-        FfiConverterString.lower(path),
-        FfiConverterBool.lower(useGpu),
-        FfiConverterUInt32.lower(contextSize),$0
+
+// Callback handlers for an async calls.  These are invoked by Rust when the future is ready.  They
+// lift the return value or error and resume the suspended function.
+fileprivate func uniffiFutureContinuationCallback(handle: UInt64, pollResult: Int8) {
+    if let continuation = try? uniffiContinuationHandleMap.remove(handle: handle) {
+        continuation.resume(returning: pollResult)
+    } else {
+        print("uniffiFutureContinuationCallback invalid handle")
+    }
+}
+/**
+ * Compute the cosine similarity between two vectors.
+ */
+public func cosineSimilarity(a: [Float], b: [Float]) -> Float  {
+    return try!  FfiConverterFloat.lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_cosine_similarity(
+        FfiConverterSequenceFloat.lower(a),
+        FfiConverterSequenceFloat.lower(b),$0
     )
 })
 }
-public func loadEmbedder(path: String, useGpu: Bool, contextSize: UInt32)throws  -> Embedder  {
-    return try  FfiConverterTypeEmbedder_lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_func_load_embedder(
-        FfiConverterString.lower(path),
-        FfiConverterBool.lower(useGpu),
-        FfiConverterUInt32.lower(contextSize),$0
+/**
+ * Load a GGUF model from a local path or remote URL.
+ *
+ * Accepts local filesystem paths, `hf://owner/repo/file.gguf` for HuggingFace downloads,
+ * or `https://` URLs. Downloaded models are cached automatically.
+ *
+ * This is a free function instead of an async constructor because
+ * uniffi-bindgen-react-native generates invalid JS (`async static` instead
+ * of `static async`) for async constructors.
+ */
+public func loadModel(modelPath: String, useGpu: Bool, projectionModelPath: String?, onDownloadProgress: RustDownloadProgressCallback?)async throws  -> RustModel  {
+    return
+        try  await uniffiRustCallAsync(
+            rustFutureFunc: {
+                uniffi_nobodywho_uniffi_fn_func_load_model(FfiConverterString.lower(modelPath),FfiConverterBool.lower(useGpu),FfiConverterOptionString.lower(projectionModelPath),FfiConverterOptionCallbackInterfaceRustDownloadProgressCallback.lower(onDownloadProgress)
+                )
+            },
+            pollFunc: ffi_nobodywho_uniffi_rust_future_poll_u64,
+            completeFunc: ffi_nobodywho_uniffi_rust_future_complete_u64,
+            freeFunc: ffi_nobodywho_uniffi_rust_future_free_u64,
+            liftFunc: FfiConverterTypeRustModel_lift,
+            errorHandler: FfiConverterTypeNobodyWhoError_lift
+        )
+}
+/**
+ * Get the default sampler configuration.
+ */
+public func samplerPresetDefault() -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_default($0
     )
 })
 }
-public func loadEncoder(path: String, useGpu: Bool, contextSize: UInt32)throws  -> Encoder  {
-    return try  FfiConverterTypeEncoder_lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_func_load_encoder(
-        FfiConverterString.lower(path),
-        FfiConverterBool.lower(useGpu),
-        FfiConverterUInt32.lower(contextSize),$0
+/**
+ * Create a DRY sampler preset to reduce repetition.
+ */
+public func samplerPresetDry() -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_dry($0
     )
 })
 }
-public func loadModel(path: String, useGpu: Bool, mmprojPath: String?)throws  -> Model  {
-    return try  FfiConverterTypeModel_lift(try rustCallWithError(FfiConverterTypeNobodyWhoError_lift) {
-    uniffi_nobodywho_uniffi_fn_func_load_model(
-        FfiConverterString.lower(path),
-        FfiConverterBool.lower(useGpu),
-        FfiConverterOptionString.lower(mmprojPath),$0
+/**
+ * Create a sampler with a custom grammar constraint.
+ */
+public func samplerPresetGrammar(grammar: String) -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_grammar(
+        FfiConverterString.lower(grammar),$0
+    )
+})
+}
+/**
+ * Create a greedy sampler (always picks most probable token).
+ */
+public func samplerPresetGreedy() -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_greedy($0
+    )
+})
+}
+/**
+ * Create a sampler configured for JSON output generation.
+ */
+public func samplerPresetJson() -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_json($0
+    )
+})
+}
+/**
+ * Create a sampler with temperature scaling.
+ */
+public func samplerPresetTemperature(temperature: Float) -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_temperature(
+        FfiConverterFloat.lower(temperature),$0
+    )
+})
+}
+/**
+ * Create a sampler with top-k filtering only.
+ */
+public func samplerPresetTopK(topK: Int32) -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_top_k(
+        FfiConverterInt32.lower(topK),$0
+    )
+})
+}
+/**
+ * Create a sampler with nucleus (top-p) sampling.
+ */
+public func samplerPresetTopP(topP: Float) -> SamplerConfig  {
+    return try!  FfiConverterTypeSamplerConfig_lift(try! rustCall() {
+    uniffi_nobodywho_uniffi_fn_func_sampler_preset_top_p(
+        FfiConverterFloat.lower(topP),$0
     )
 })
 }
@@ -2032,64 +3716,180 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_func_init_logging() != 16735) {
+    if (uniffi_nobodywho_uniffi_checksum_func_cosine_similarity() != 63439) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_func_load_cross_encoder() != 24331) {
+    if (uniffi_nobodywho_uniffi_checksum_func_load_model() != 33587) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_func_load_embedder() != 42342) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_default() != 10834) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_func_load_encoder() != 35564) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_dry() != 55378) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_func_load_model() != 10962) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_grammar() != 29288) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_chat_ask() != 36782) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_greedy() != 13219) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_chat_ask_with_prompt() != 6303) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_json() != 40006) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_chat_history() != 14042) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_temperature() != 64803) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_crossencoder_rank() != 31183) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_top_k() != 44137) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_crossencoder_rank_and_sort() != 63234) {
+    if (uniffi_nobodywho_uniffi_checksum_func_sampler_preset_top_p() != 54893) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_embedder_embed() != 37069) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_ask() != 53575) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_embedder_embed_batch() != 22810) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_ask_with_embeddings() != 6490) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_encoder_encode() != 20990) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_ask_with_prompt() != 65089) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_prompt_push_image() != 8941) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_get_chat_history() != 12722) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_prompt_push_text() != 4146) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_get_sampler_config_json() != 33078) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_tokenstream_completed() != 36595) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_get_system_prompt() != 57727) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_method_tokenstream_next_token() != 41590) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_get_template_variables() != 19616) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_constructor_chat_new() != 45108) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_reset_context() != 47191) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_nobodywho_uniffi_checksum_constructor_prompt_new() != 43155) {
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_reset_history() != 12058) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_set_chat_history() != 6058) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_set_sampler_config() != 28012) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_set_system_prompt() != 31690) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_set_template_variable() != 64000) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_set_tools() != 55680) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustchat_stop_generation() != 24711) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustcrossencoder_rank() != 55500) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustcrossencoder_rank_and_sort_json() != 24587) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustencoder_encode() != 52601) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustmodel_encode_image() != 22449) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rusttokenstream_completed() != 26060) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rusttokenstream_next_token() != 44770) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rusttool_get_schema_json() != 4679) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rusttool_next_pending_call() != 52020) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rusttool_resolve_pending_call() != 10096) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_dist() != 23376) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_dry() != 35315) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_grammar() != 24369) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_greedy() != 32898) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_min_p() != 33705) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_mirostat_v1() != 58563) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_mirostat_v2() != 41682) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_penalties() != 40767) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_temperature() != 8456) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_top_k() != 26600) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_top_p() != 54577) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_typical_p() != 28727) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerbuilder_xtc() != 22853) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_samplerconfig_to_json() != 51798) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_constructor_rustchat_new() != 38902) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_constructor_rustcrossencoder_new() != 9022) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_constructor_rustencoder_new() != 27902) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_constructor_rusttool_new() != 9431) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_constructor_rusttool_new_async() != 54521) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_constructor_samplerbuilder_new() != 50214) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_constructor_samplerconfig_from_json() != 6867) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rustdownloadprogresscallback_on_download_progress() != 28617) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_nobodywho_uniffi_checksum_method_rusttoolcallback_call() != 43958) {
         return InitializationResult.apiChecksumMismatch
     }
 
+    uniffiCallbackInitRustDownloadProgressCallback()
+    uniffiCallbackInitRustToolCallback()
     return InitializationResult.ok
 }()
 

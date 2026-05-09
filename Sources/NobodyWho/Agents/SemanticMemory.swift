@@ -11,23 +11,23 @@ public class SemanticMemory {
     }
 
     /// Embeds and stores a document.
-    public func saveDocument(id: String, text: String, metadata: [String: String] = [:]) throws {
-        let vector = try embedder.embed(text)
+    public func saveDocument(id: String, text: String, metadata: [String: String] = [:]) async throws {
+        let vector = try await embedder.embed(text)
         var fullMetadata = metadata
         fullMetadata["text"] = text
         vectorStore.add(id: id, vector: vector, metadata: fullMetadata)
     }
 
     /// Embeds and stores multiple documents.
-    public func saveDocuments(_ documents: [(id: String, text: String, metadata: [String: String])]) throws {
+    public func saveDocuments(_ documents: [(id: String, text: String, metadata: [String: String])]) async throws {
         for doc in documents {
-            try saveDocument(id: doc.id, text: doc.text, metadata: doc.metadata)
+            try await saveDocument(id: doc.id, text: doc.text, metadata: doc.metadata)
         }
     }
 
     /// Returns the top-K documents most semantically similar to the query.
-    public func search(query: String, topK: Int = 3) throws -> [ScoredDocument] {
-        let queryVector = try embedder.embed(query)
+    public func search(query: String, topK: Int = 3) async throws -> [ScoredDocument] {
+        let queryVector = try await embedder.embed(query)
         return vectorStore.search(query: queryVector, topK: topK)
     }
 
@@ -58,21 +58,21 @@ public class HybridSemanticMemory {
         self.reranker = reranker
     }
 
-    public func saveDocument(id: String, text: String, metadata: [String: String] = [:]) throws {
-        try semanticMemory.saveDocument(id: id, text: text, metadata: metadata)
+    public func saveDocument(id: String, text: String, metadata: [String: String] = [:]) async throws {
+        try await semanticMemory.saveDocument(id: id, text: text, metadata: metadata)
     }
 
     /// Retrieves the top-K documents.
     ///
     /// When a reranker is present, fetches `rerankCandidates` via vector search first,
     /// then reranks with a cross-encoder and returns the top-K results.
-    public func search(query: String, topK: Int = 3, rerankCandidates: Int = 10) throws -> [ScoredDocument] {
+    public func search(query: String, topK: Int = 3, rerankCandidates: Int = 10) async throws -> [ScoredDocument] {
         guard let reranker else {
-            return try semanticMemory.search(query: query, topK: topK)
+            return try await semanticMemory.search(query: query, topK: topK)
         }
 
-        let candidates = try semanticMemory.search(query: query, topK: rerankCandidates)
-        let reranked = try reranker.rankAndSort(query: query, documents: candidates.map { $0.text })
+        let candidates = try await semanticMemory.search(query: query, topK: rerankCandidates)
+        let reranked = try await reranker.rankAndSort(query: query, documents: candidates.map { $0.text })
 
         return Array(reranked.prefix(topK).map { ranked in
             let original = candidates.first { $0.text == ranked.content }
